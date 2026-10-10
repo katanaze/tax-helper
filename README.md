@@ -21,3 +21,7 @@ Stop it with Ctrl+C in the terminal window.
 - **All years** tab: key figures for every saved year side by side; click a year to open it.
 - **Settings → Years**: create an earlier year (e.g. to record an old return). **Settings → Lock** makes a filed year read-only.
 - **Export**: Settings or All years → download one year in full, or the all-years summary, as CSV.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
