@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tax Return Helper</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top-inner">
+    <div class="brand">Tax Return Helper <span class="muted">· etaxnbr.gov.bd</span></div>
+    <div class="year-controls">
+      <div class="ctl-group">
+        <label>Person <select id="personSelect"></select></label>
+        <button id="addPersonBtn" class="secondary" title="Prepare a return for someone else, e.g. your spouse">Add person</button>
+      </div>
+      <div class="ctl-group">
+        <label>Year <select id="yearSelect"></select></label>
+        <button id="nextYearBtn" class="secondary" title="Start the next year, carrying over assets, liabilities, policies and categories">Start next year</button>
+      </div>
+      <span id="saveStatus" class="muted"></span>
+    </div>
+    </div>
+  </header>
+  <nav class="tabs"><div id="tabs" class="wrap tabs-inner"></div></nav>
+  <main id="main"><p class="muted">Loading…</p></main>
+  <script src="app.js"></script>
+</body>
+</html>

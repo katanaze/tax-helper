@@ -1,0 +1,11 @@
+# Personal tax data: never commit
+data/
+
+# OS / editor / runtime clutter
+.DS_Store
+__pycache__/
+*.pyc
+*.tmp
+
+# Personal Claude Code notes
+CLAUDE.local.md

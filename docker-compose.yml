@@ -1,0 +1,12 @@
+services:
+  tax-helper:
+    build: .
+    image: tax-helper:latest
+    container_name: tax-helper
+    ports:
+      # Published on localhost only, so the app isn't reachable from your network
+      - "127.0.0.1:8765:8765"
+    volumes:
+      # Your tax data stays in this folder on your Mac (data/<year>.json + backups)
+      - ./data:/app/data
+    restart: unless-stopped
