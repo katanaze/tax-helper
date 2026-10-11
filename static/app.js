@@ -646,7 +646,7 @@ async function loadYear(ay) {
   await save();
   try { state = normalize(await api(yearsUrl(ay))); }
   catch { state = blankYear(ay); state.profile.name = personName(); dirty = true; save(); }
-  csv = null; selMonth = null; bal = { toExp: 0, assetId: null, touched: false };
+  csv = null; selMonth = null; cardResult = null; bal = { toExp: 0, assetId: null, touched: false };
   prevDoc = null;
   if (years.includes(prevAY(ay))) { try { prevDoc = normalize(await api(yearsUrl(prevAY(ay)))); } catch { /* shown as missing */ } }
   renderYearSelect(); render();
@@ -1006,7 +1006,11 @@ views.monthly = () => {
     ${totalsTable}
   </section>` : ''}
   ${mo.skipped ? `<div class="warn">${mo.skipped} month(s) before your latest payslip aren't marked received, so they're being projected. Enter them, or switch to "Totals so far, then monthly".</div>` : ''}
+  ${cardResultHtml()}
   ${mode !== 'year' ? `<section class="panel">
+    <p style="margin-top:0"><button class="secondary" data-action="mo-card">Import a tax card (PDF)</button>
+      <input type="file" id="taxCardPdf" accept="application/pdf,.pdf" hidden>
+      <span class="muted">Optional: the monthly Tax Card PDF from accordHRM fills that month's salary and TDS.</span></p>
     <div class="chips">${chips}</div>
     <p class="muted" style="margin:6px 0 12px">${calc('mo_receivedLabel')} · <span class="dot st-actual"></span>received <span class="dot st-planned"></span>planned <span class="dot st-projected"></span>projected${mode === 'ytd' ? ' <span class="dot st-carry"></span>in the totals' : ''}</p>
     ${editor}
@@ -1077,6 +1081,173 @@ function pushMonthlyToIncome() {
     row.tds = Math.round(mo[`tdsc_${x.id}`]);
   }
   tab = 'income';
+}
+
+/* ---------- import a monthly tax card (accordHRM payroll PDF) ---------- */
+const MONTHS = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+
+function parseTaxCard(pages) {
+  const L = returnLines(pages);
+  if (!L.some(l => /^Tax Card$/i.test(l.text)) || !L.some(l => /^Income Details$/i.test(l.text))) {
+    throw new Error("This doesn't look like a monthly tax card. Use the Tax Card PDF from accordHRM (one month's card).");
+  }
+  const all = L.map(l => l.text).join('\n');
+  const iy = /Income Year\s*(\d{4})\s*-\s*(\d{4})/i.exec(all);
+  // header rows are label/value pairs: "Employee | Name | Month | July-2026"
+  const info = {};
+  for (const l of L.slice(0, L.findIndex(x => /^Income Details$/i.test(x.text)))) {
+    for (let k = 0; k + 1 < l.cells.length; k += 2) info[l.cells[k].t.toLowerCase()] = l.cells[k + 1].t;
+  }
+  const mm = /^([A-Za-z]+)[\s-]+(\d{4})$/.exec(info.month || '');
+  const mi = mm ? MONTHS.indexOf(mm[1].toLowerCase()) : -1;
+  if (!iy || mi < 0) throw new Error("Couldn't find the income year and month on the tax card.");
+  const c = { incomeYear: `${iy[1]}-${iy[2]}`, ay: `${iy[2]}-${+iy[2] + 1}`, monthIdx: (mi + 6) % 12, monthLabel: `${mm[1]} ${mm[2]}`,
+    employee: info.employee || '', tin: (info['e-tin'] || info.tin || '').replace(/\D/g, '') };
+
+  // income heads: name | this month | YTD | projected annual
+  const inc = section(L, /^Income Head/i, /^Total\b/);
+  c.heads = inc.slice(1).filter(l => l.cells.length >= 2 && isAmt(l.cells[1].t))
+    .map(l => ({ name: l.cells[0].t, amount: num(l.cells[1].t), ytd: num(l.cells[2]?.t), projected: num(l.cells[l.cells.length - 1].t) }));
+  const totalLine = L.find(l => /^Total$/i.test(l.cells[0].t) && l.cells.length >= 3);
+  c.projectedAnnual = totalLine ? num(totalLine.cells[totalLine.cells.length - 1].t) : sum(c.heads.map(h => h.projected));
+
+  const v = re => amt(L, re) ?? 0;
+  c.tdsRegular = v(/^Monthly Tax Deduction for/i);
+  c.tdsOneTime = v(/^One-off Tax Deduction for/i) + v(/^Off Cycle Tax Deduction for/i);
+  c.tdsTotal = v(/^Total Tax Deduction for/i);
+  c.taxable = v(/^Total Taxable Income/i);
+  c.grossTax = v(/^Total Income Tax Liability/i);
+  c.taxPayable = v(/^Total income tax payable/i);
+  // "Tax Reduction for Early Return Filing (5% or BDT 25,000 whichever is" wraps; its amount sits on the next line
+  const ei = L.findIndex(l => /^Tax Reduction for Early Return Filing/i.test(l.text));
+  c.earlyFiling = ei < 0 ? 0 : (lineLV(L[ei]).amts.pop() ?? (isAmt(L[ei + 1]?.text || '') ? num(L[ei + 1].text) : 0));
+  const bi = L.findIndex(l => /^b\)$/.test(l.cells[0].t)); // "b) 0.1 x Actual investment declared | 1,00,000 | ..."
+  c.investment = bi >= 0 ? num(L[bi].cells.find((x, k) => k > 0 && isAmt(x.t))?.t) : 0;
+  const pct = re => { const x = re.exec(all); return x ? Math.round(parseFloat(x[1]) * 1000) / 10 : null; };
+  c.rebatePctIncome = pct(/(\d*\.\d+)\s*x\s*Total Taxable Income/i);
+  c.rebatePctInvestment = pct(/(\d*\.\d+)\s*x\s*Actual investment/i);
+  c.rebateCap = amt(L, /^(c\) )?Maximum allowable limit/i);
+  // slab rows: "On the first Tk. | 400,000 | 0% | 0"
+  c.slabs = L.filter(l => /^On the (first|next|balance)/i.test(l.cells[0].t) && l.cells.length >= 3)
+    .map(l => ({ income: num(l.cells[1].t), rate: num(l.cells[2].t) }));
+  return c;
+}
+
+// The open year's monthly item that a tax card income head belongs to, by shared significant words.
+function matchComponent(comps, name) {
+  const words = n => n.toLowerCase().replace(/[^a-z ]/g, ' ').split(/\s+/).filter(w => w && !['allowance', 'salary', 'bonus', 'the', 'of', 'and'].includes(w));
+  const exact = comps.find(c => c.name.trim().toLowerCase() === name.trim().toLowerCase());
+  if (exact) return exact;
+  const w = words(name);
+  let best = null, score = 0;
+  for (const c of comps) {
+    const s = words(c.name).filter(x => w.includes(x)).length;
+    if (s > score) { best = c; score = s; }
+  }
+  return best;
+}
+
+let cardResult = null; // transient: summary of the last tax card import
+
+async function importTaxCard(file) {
+  if (!file) return;
+  try {
+    const res = await fetch('/api/pdf-text', { method: 'POST', headers: { 'Content-Type': 'application/pdf' }, body: file });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || 'The server could not read the file.');
+    const card = parseTaxCard(out.pages);
+    if (applyTaxCard(card, file.name)) { scheduleSave(); render(); $('#cardResult')?.scrollIntoView({ block: 'start' }); }
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+// Fill the card's month on the Salary income tab. Returns false if nothing was changed.
+function applyTaxCard(card, fileName) {
+  const s = state, m = s.monthly, L = monthLabels(s.assessmentYear), i = card.monthIdx;
+  if (card.ay !== s.assessmentYear) {
+    const lbl = yearInfo(card.ay).ayLabel;
+    alert(`This tax card is for income year ${card.incomeYear} (${lbl}), but ${yearInfo(s.assessmentYear).ayLabel} is open. `
+      + (years.includes(card.ay) ? `Switch to ${lbl} with the year selector, then import it again.` : `Create ${lbl} first (the "Start" button at the top, or Settings → Years), then import it again.`));
+    return false;
+  }
+  const myTin = s.profile.tin.replace(/\D/g, '');
+  if (card.tin && myTin && card.tin !== myTin && !confirm(`This tax card is for ${card.employee} (TIN ${card.tin}), not ${personName()} (TIN ${s.profile.tin}). Import it anyway?`)) return false;
+  if (i <= num(m.carryIn.through)) {
+    alert(`${L[i].long} is included in your totals on this tab ("My totals cover"). Choose "Month by month", or make the totals end before ${L[i].long}, then import the card again.`);
+    return false;
+  }
+  const mm = m.months[i];
+  const hasData = mm.received || Object.values(mm.amounts).some(x => !isBlank(x)) || !isBlank(mm.tdsRegular) || !isBlank(mm.tdsOneTime);
+  if (hasData && !confirm(`${L[i].long} already has values. Replace them with the tax card's?`)) return false;
+
+  const filled = [], added = [];
+  mm.amounts = {}; mm.tds = {};
+  for (const h of card.heads) {
+    let comp = matchComponent(m.components.filter(x => x.kind !== 'other'), h.name);
+    if (!comp) {
+      if (!h.amount && !h.projected) continue; // a head that's 0 all year
+      comp = { id: uid(), name: h.name, kind: 'salary', recurring: !/bonus|arrear|incentive|one.?off|festival|eid/i.test(h.name) };
+      m.components.push(comp); added.push(h.name);
+    }
+    mm.amounts[comp.id] = num(mm.amounts[comp.id]) + h.amount;
+    filled.push([h.name === comp.name ? h.name : `${h.name} → ${comp.name}`, h.amount]);
+  }
+  mm.tdsRegular = card.tdsRegular; mm.tdsOneTime = card.tdsOneTime; mm.received = true;
+  if (!mm.note) mm.note = 'From tax card';
+  selMonth = i;
+
+  // compare the employer's projection and tax rules with this app's
+  const mo = compute(s).mo; const r = s.rules; const notes = [];
+  const thr = card.slabs[0] && card.slabs[0].rate === 0 ? card.slabs[0].income : null;
+  const ruleDiffs = [];
+  const myThr = num(r.thresholds[s.profile.category] ?? r.thresholds.general);
+  if (thr !== null && thr !== myThr) ruleDiffs.push(`tax-free amount ${fmt(thr)} (here ${fmt(myThr)})`);
+  // bands are only certain where the next slab has income in it
+  const bands = card.slabs.slice(1).map((x, k, arr) => ({ rate: x.rate, upto: k + 1 < arr.length && arr[k + 1].income > 0 ? x.income : null }));
+  bands.forEach((b, k) => {
+    const mine = r.slabs[k];
+    if (!mine) return;
+    if (b.rate !== num(mine.rate)) ruleDiffs.push(`slab ${k + 1} rate ${b.rate}% (here ${num(mine.rate)}%)`);
+    if (b.upto !== null && b.upto !== num(mine.upto)) ruleDiffs.push(`${b.rate}% band ${fmt(b.upto)} (here ${fmt(num(mine.upto))})`);
+  });
+  if (card.rebatePctInvestment !== null && card.rebatePctInvestment !== num(r.rebatePctInvestment)) ruleDiffs.push(`rebate ${card.rebatePctInvestment}% of investment (here ${num(r.rebatePctInvestment)}%)`);
+  if (card.rebatePctIncome !== null && card.rebatePctIncome !== num(r.rebatePctIncome)) ruleDiffs.push(`rebate cap ${card.rebatePctIncome}% of income (here ${num(r.rebatePctIncome)}%)`);
+  if (card.rebateCap && card.rebateCap !== num(r.rebateCap)) ruleDiffs.push(`rebate limit ${fmt(card.rebateCap)} (here ${fmt(num(r.rebateCap))})`);
+  if (Math.round(card.projectedAnnual) !== Math.round(mo.totalAnnual)) notes.push(`Your employer projects ${fmt(card.projectedAnnual)} for the year; this tab projects ${fmt(mo.totalAnnual)}. The difference is usually bonuses: plan them on the months you expect them.`);
+  if (card.earlyFiling) notes.push(`The card counts ${fmt(card.earlyFiling)} of "tax reduction for early return filing" as tax already paid. It isn't deducted from your salary, so it isn't entered here.`);
+  cardResult = { fileName, month: L[i].long, filled, added, tdsRegular: card.tdsRegular, tdsOneTime: card.tdsOneTime, notes, ruleDiffs,
+    card: { taxable: card.taxable, grossTax: card.grossTax, taxPayable: card.taxPayable, investment: card.investment }, rules: { thr, bands, ...card } };
+  return true;
+}
+
+// Set this year's tax rules to the ones the tax card used (only the parts the card shows).
+function applyCardRules() {
+  const x = cardResult.rules; const r = state.rules;
+  if (x.thr !== null) r.thresholds[state.profile.category in r.thresholds ? state.profile.category : 'general'] = x.thr;
+  x.bands.forEach((b, k) => { if (!r.slabs[k]) return; r.slabs[k].rate = b.rate; if (b.upto !== null) r.slabs[k].upto = b.upto; });
+  if (x.rebatePctInvestment !== null) r.rebatePctInvestment = x.rebatePctInvestment;
+  if (x.rebatePctIncome !== null) r.rebatePctIncome = x.rebatePctIncome;
+  if (x.rebateCap) r.rebateCap = x.rebateCap;
+  cardResult.ruleDiffs = []; cardResult.rulesApplied = true;
+}
+
+function cardResultHtml() {
+  const x = cardResult; if (!x) return '';
+  const rows = x.filled.map(([n, a]) => `<tr><td>${esc(n)}</td><td class="r">${fmt(a)}</td></tr>`).join('');
+  return `<section class="panel" id="cardResult">
+    <div class="ok">Filled <b>${esc(x.month)}</b> from <b>${esc(x.fileName)}</b> and marked it received.</div>
+    <table class="grid"><tbody>${rows}
+      <tr><td>Regular monthly TDS on salary</td><td class="r">${fmt(x.tdsRegular)}</td></tr>
+      ${x.tdsOneTime ? `<tr><td>One-time TDS</td><td class="r">${fmt(x.tdsOneTime)}</td></tr>` : ''}</tbody></table>
+    ${x.added.length ? `<p class="muted">New income items added: ${x.added.map(esc).join(', ')}. Check whether each is recurring under "Income items" below.</p>` : ''}
+    ${x.notes.map(n => `<div class="help">${esc(n)}</div>`).join('')}
+    ${x.ruleDiffs.length ? `<div class="warn">The tax card uses different tax rules from this year's settings: ${esc(x.ruleDiffs.join('; '))}. Your employer's payroll usually follows the current Finance Act.
+      <p style="margin-top:8px"><button data-action="card-rules">Use the tax card's rules</button></p></div>` : ''}
+    ${x.rulesApplied ? '<div class="ok">Tax rules updated from the tax card. Check them in Settings → Tax rules.</div>' : ''}
+    <p class="muted">Employer's figures for the year: taxable income ${fmt(x.card.taxable)}, tax ${fmt(x.card.grossTax)}, payable after rebate ${fmt(x.card.taxPayable)}${x.card.investment ? ` (assuming ${fmt(x.card.investment)} of investment)` : ''}.</p>
+    <p><button class="secondary" data-action="card-dismiss">Dismiss</button></p>
+  </section>`;
 }
 
 function copyPrevMonth() {
@@ -2569,6 +2740,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   if (e.target.id === 'csvFile') return loadCsvFile(e.target.files[0]);
+  if (e.target.id === 'taxCardPdf') { const f = e.target.files[0]; e.target.value = ''; if (!state.locked) importTaxCard(f); return; }
   if (e.target.id === 'returnPdf') { const f = e.target.files[0]; e.target.value = ''; return importReturnPdf(f); }
   if (e.target.id === 'yearSelect') return loadYear(e.target.value);
   if (e.target.id === 'personSelect') return switchPerson(e.target.value);
@@ -2626,6 +2798,9 @@ document.addEventListener('click', async e => {
     state.monthly.months[selMonth] = blankMonth();
   }
   else if (a === 'mo-push') { pushMonthlyToIncome(); }
+  else if (a === 'mo-card') { $('#taxCardPdf').click(); return; }
+  else if (a === 'card-dismiss') { cardResult = null; render(); return; }
+  else if (a === 'card-rules') { if (!confirm("Update this year's tax rules (Settings → Tax rules) to the tax card's?")) return; applyCardRules(); }
   else if (a === 'bal-all-exp' || a === 'bal-all-asset') {
     bal.toExp = a === 'bal-all-exp' ? compute(state).difference : 0; bal.touched = true;
     $('#balancePanel').innerHTML = balancePanelHtml(compute(state)); return;
