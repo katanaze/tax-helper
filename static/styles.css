@@ -13,6 +13,8 @@
   --input: #ffffff;
   --head: #f1f3f6;
   --row-hover: #fafbfc;
+  --info: #1d5fa8;
+  --info-soft: #e6effa;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -30,6 +32,8 @@
     --input: #161a20;
     --head: #20252d;
     --row-hover: #1f242b;
+    --info: #7fb2ec;
+    --info-soft: #1b2635;
   }
 }
 * { box-sizing: border-box; }
@@ -51,6 +55,20 @@ a { color: var(--accent); }
 .year-controls label { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--muted); font-size: 13px; white-space: nowrap; }
 .year-controls select { width: auto; margin: 0; }
 #saveStatus { font-size: 12px; min-width: 70px; }
+/* which year is open: a badge by the year selector, a stripe on the header, a banner when peeking */
+.year-pill { font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 10px; white-space: nowrap; border: 1px solid transparent; }
+.year-pill:empty { display: none; }
+.year-pill.role-filing { background: var(--accent-soft); color: var(--accent); }
+.year-pill.role-earning { background: var(--info-soft); color: var(--info); }
+.year-pill.role-past, .year-pill.role-future { background: var(--warn-soft); color: var(--warn); }
+.top { border-top: 4px solid transparent; }
+body[data-role=filing] .top { border-top-color: var(--accent); }
+body[data-role=earning] .top { border-top-color: var(--info); }
+body[data-role=past] .top, body[data-role=future] .top { border-top-color: var(--warn); }
+.year-banner { border-radius: 6px; padding: 10px 12px; margin: 0 0 14px; line-height: 1.6; }
+.year-banner.past { background: var(--warn-soft); color: var(--warn); }
+.year-banner.earning { background: var(--info-soft); color: var(--info); }
+.year-banner button { margin-left: 6px; }
 @media (max-width: 700px) { .year-controls, .year-controls .ctl-group { flex-wrap: wrap; max-width: 100%; min-width: 0; } .year-controls .ctl-group + .ctl-group { padding-left: 0; border-left: 0; } .year-controls select { max-width: 100%; } }
 .tabs { background: var(--panel); border-bottom: 1px solid var(--border); }
 .tabs-inner { display: flex; gap: 2px; overflow-x: auto; padding: 0 4px; }

@@ -20,7 +20,7 @@ A local web app for preparing your Bangladesh income tax e-return on [etaxnbr.go
 - **Entry sheet:** every figure to type into the website, in the website's order, with copy buttons and tick-boxes.
 - **Pay and submit:** record the tax you paid with the return and the submission, then lock the year.
 - **Checklist:** documents to gather and steps to follow. Mark anything that doesn't apply to you as N/A.
-- **Several years:** **Start next year** carries over assets, liabilities, policies and categories. **All years** shows key figures side by side.
+- **Several years:** **Start next year** carries over assets, liabilities, policies and categories. **All years** shows key figures side by side. A badge and a coloured stripe show whether the open year is the one you're filing now, the income year in progress, or a past or future year, and a banner warns you before you edit a year you're only looking at.
 - **Several people:** keep separate returns for, say, you and your spouse.
 - **Import a filed return (PDF):** record a year you filed before you used the app, from the return's PDF. See [Importing documents](#importing-documents).
 - **Import a monthly tax card (PDF):** fill a month on the Salary income tab from your employer's tax card. This currently reads the accordHRM payroll format.

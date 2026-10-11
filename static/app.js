@@ -139,6 +139,12 @@ function defaultAY() {
   const d = new Date(); const y = d.getMonth() >= 6 ? d.getFullYear() : d.getFullYear() - 1;
   return `${y}-${y + 1}`;
 }
+// Where a year stands today: the return due now ('filing'), the income year under way ('earning'), or 'past' / 'future'.
+function yearRole(ay) {
+  const filing = defaultAY(), earning = nextAY(filing);
+  return ay === filing ? 'filing' : ay === earning ? 'earning' : ay < filing ? 'past' : 'future';
+}
+const ROLE_LABEL = { filing: 'Filing now', earning: 'In progress', past: 'Past year', future: 'Future year' };
 
 function blankYear(ay) {
   return {
@@ -654,7 +660,14 @@ async function loadYear(ay) {
 
 function renderYearSelect() {
   const all = Array.from(new Set([...years, state?.assessmentYear].filter(Boolean))).sort();
-  $('#yearSelect').innerHTML = all.map(y => `<option value="${y}" ${y === state?.assessmentYear ? 'selected' : ''}>${yearInfo(y).ayLabel} · income year ${yearInfo(y).iyLabel}</option>`).join('');
+  $('#yearSelect').innerHTML = all.map(y => `<option value="${y}" ${y === state?.assessmentYear ? 'selected' : ''}>${yearInfo(y).ayLabel} · income year ${yearInfo(y).iyLabel} · ${ROLE_LABEL[yearRole(y)].toLowerCase()}</option>`).join('');
+  if (state) {
+    const role = yearRole(state.assessmentYear);
+    $('#yearRole').textContent = ROLE_LABEL[role] + (state.locked ? ' · locked' : '');
+    $('#yearRole').className = `year-pill role-${role}`;
+    document.body.dataset.role = role;
+    document.title = `${yearInfo(state.assessmentYear).ayLabel} (${ROLE_LABEL[role].toLowerCase()}) · Tax Return Helper`;
+  }
   $('#nextYearBtn').textContent = state ? `Start ${yearInfo(nextAY(state.assessmentYear)).ayLabel}` : 'Start next year';
 }
 
@@ -2706,13 +2719,33 @@ function csvPanel() {
 }
 
 /* ---------- rendering ---------- */
+// Banner saying which year is open when it isn't the one you'd normally be working on.
+function yearBannerHtml() {
+  const ay = state.assessmentYear, y = yearInfo(ay), lbl = y.ayLabel, role = yearRole(ay);
+  const filing = defaultAY(), fl = yearInfo(filing).ayLabel;
+  const go = ay !== filing && years.includes(filing)
+    ? ` <button class="secondary" data-action="go-year" data-ay="${filing}" data-lock-safe="1">Go to ${fl} (filing now)</button>` : '';
+  const locked = `${lbl} is locked (filed). Unlock it in Settings to make changes.`;
+  if (role === 'past') {
+    if (state.locked) return `<div class="year-banner past">You're looking at <b>${lbl}</b>, a past year. ${locked}${go}</div>`;
+    const nx = nextAY(ay);
+    return `<div class="year-banner past">You're looking at <b>${lbl}</b>, a past year (income year ${y.iyLabel}). Changes here alter that year's figures${years.includes(nx) ? `, and ${yearInfo(nx).ayLabel} takes its opening values from it` : ''}.${go}
+      <button class="secondary" data-action="lock-year" data-lock-safe="1">Lock ${lbl}</button></div>`;
+  }
+  if (role === 'future') return `<div class="year-banner past">You're looking at <b>${lbl}</b>, a future year: its income year starts on ${y.startLabel}.${go}</div>`;
+  if (role === 'earning' && prevDoc && prevDoc.assessmentYear === filing && !prevDoc.submission.submitted && !prevDoc.locked) {
+    return `<div class="year-banner earning"><b>${lbl}</b> is the income year in progress (until ${y.endLabel}). The return due now is <b>${fl}</b>, by ${yearInfo(filing).deadline}.${go}</div>`;
+  }
+  return state.locked ? `<div class="warn">${locked}</div>` : '';
+}
+
 function render() {
   $('#tabs').innerHTML = TABS.map(([id, label]) => `<button class="${id === tab ? 'active' : ''}" data-action="tab" data-tab="${id}">${label}</button>`).join('');
-  $('#main').innerHTML = (state.locked && tab !== 'history'
-    ? `<div class="warn">${yearInfo(state.assessmentYear).ayLabel} is locked (filed). Unlock it in Settings to make changes.</div>` : '') + views[tab]();
+  $('#main').innerHTML = (tab !== 'history' ? yearBannerHtml() : '') + views[tab]();
+  renderYearSelect(); // keeps the year badge (e.g. "locked") current
   if (state.locked) {
     $('#main').querySelectorAll('input, select, textarea, button').forEach(el => {
-      if (!el.dataset.lockSafe && !['month', 'copy', 'print', 'tab', 'open-year'].includes(el.dataset.action)) el.disabled = true;
+      if (!el.dataset.lockSafe && !['month', 'copy', 'print', 'tab', 'open-year', 'go-year'].includes(el.dataset.action)) el.disabled = true;
     });
   }
   refreshCalc();
@@ -2795,7 +2828,7 @@ document.addEventListener('click', async e => {
     e.preventDefault(); tab = b.dataset.tab; if (tab === 'history') historyData = null;
     history.replaceState(null, '', `#${tab}`); render(); window.scrollTo(0, 0); return;
   }
-  if (state.locked && !['month', 'copy', 'print', 'export-year', 'export-all', 'open-year', 'create-year', 'save-yearend', 'past-start', 'past-import', 'past-cancel', 'past-save', 'rename-person', 'remove-person', 'confirm-paid', 'undo-paid', 'confirm-submitted', 'undo-submitted', 'ack-sent', 'ack-undo', 'ack-add-bank', 'ack-del-bank', 'ack-suggest'].includes(a)) return;
+  if (state.locked && !['month', 'copy', 'print', 'export-year', 'export-all', 'open-year', 'go-year', 'create-year', 'save-yearend', 'past-start', 'past-import', 'past-cancel', 'past-save', 'rename-person', 'remove-person', 'confirm-paid', 'undo-paid', 'confirm-submitted', 'undo-submitted', 'ack-sent', 'ack-undo', 'ack-add-bank', 'ack-del-bank', 'ack-suggest'].includes(a)) return;
   if (a === 'add') { getPath(state, b.dataset.list).push(TPL[b.dataset.tpl]()); }
   else if (a === 'del') {
     const list = getPath(state, b.dataset.list); const item = list[+b.dataset.idx];
@@ -2896,6 +2929,12 @@ document.addEventListener('click', async e => {
   else if (a === 'export-year') return download(`tax-${fileSlug()}-${state.assessmentYear}.csv`, yearCSV(state));
   else if (a === 'export-all') return exportAll();
   else if (a === 'open-year') { e.preventDefault(); tab = 'overview'; return loadYear(b.dataset.ay); }
+  else if (a === 'go-year') { return loadYear(b.dataset.ay); } // stays on the same tab
+  else if (a === 'lock-year') {
+    if (!confirm(`Lock ${yearInfo(state.assessmentYear).ayLabel}? Editing is disabled until you unlock it in Settings, and its year-end values are saved if they aren't already.`)) return;
+    state.locked = true; if (!state.yearEnd) state.yearEnd = yearEndSnapshot(state);
+    renderYearSelect();
+  }
   else if (a === 'create-year') {
     const y = parseInt($('#newYearInput').value, 10);
     if (!(y > 2000 && y < 2100)) { alert('Enter the first year of the assessment year, e.g. 2025 for AY 2025-26.'); return; }
