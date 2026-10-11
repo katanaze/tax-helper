@@ -833,6 +833,28 @@ function filingPanelHtml(c) {
   return `<section class="panel"><h3>Pay and submit</h3><div class="filing">${pay}${submit}${share.replace('class="filing-step', 'class="filing-step wide')}</div></section>`;
 }
 
+// Overview panel for a year that's partly entered: actual income so far against the projection.
+function incomeSoFarHtml(mo) {
+  if (!(mo.monthsReceived > 0 && mo.monthsReceived < 12)) return '';
+  const pct = mo.totalAnnual > 0 ? Math.min(100, Math.round(mo.totalActual / mo.totalAnnual * 100)) : 0;
+  const left = 12 - mo.monthsReceived;
+  return `<section class="panel">
+    <h3>Income so far</h3>
+    <div class="progress"><div style="width:${pct}%"></div></div>
+    <p class="muted">${mo.monthsReceived} of 12 months received: ${pct}% of the projected income for the year.</p>
+    <dl class="sum">
+      <dt>Received so far (${mo.monthsReceived} month${mo.monthsReceived === 1 ? '' : 's'})</dt><dd>${calc('mo_totalActual')}</dd>
+      <dt>Still to come (projected, ${left} month${left === 1 ? '' : 's'})</dt><dd>${calc('mo_totalProjected')}</dd>
+      <dt class="total">Projected income for the year</dt><dd class="total">${calc('mo_totalAnnual')}</dd>
+      <dt>Projected tax for the year</dt><dd>${calc('mo_netTax')}</dd>
+      <dt>Tax deducted so far</dt><dd>${calc('mo_tdsPaid')}</dd>
+      <dt>${calc('mo_remainingLabel')}</dt><dd>${calc('mo_remainingAbs')}</dd>
+      <dt>Monthly TDS needed to clear it</dt><dd>${calc('mo_monthlyNeeded')}</dd>
+    </dl>
+    <p class="muted">Projected months repeat your latest month's recurring items; bonuses count only where you've planned them. <a href="#" data-action="tab" data-tab="monthly">Open Salary income</a></p>
+  </section>`;
+}
+
 views.overview = () => {
   const y = yearInfo(state.assessmentYear);
   return `
@@ -848,6 +870,7 @@ views.overview = () => {
     <div class="card"><div class="label">Net wealth</div><div class="value">${calc('closingNW')}</div><div class="sub">On ${y.endLabel}</div></div>
     <div class="card"><div class="label">Assets & liabilities difference</div><div class="value">${calc('difference')}</div><div class="sub">Must be 0 to submit</div></div>
   </div>
+  ${incomeSoFarHtml(compute(state).mo)}
   ${filingPanelHtml(compute(state))}
   <p class="muted">Stuck on the website? Most tabs have a <b>Tips</b> section for the snags people commonly hit, and the Entry sheet has a list of fixes.</p>
   <section class="panel">
