@@ -10,7 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends tzdata && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY server.py ./
+COPY server.py pdftext.py ./
 COPY static ./static
 
 # Data lives on a bind mount (see docker-compose.yml) so it survives rebuilds

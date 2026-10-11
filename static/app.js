@@ -1837,6 +1837,254 @@ function paperMappingHtml() {
     ${rows.map(([p, w]) => `<tr><td>${esc(p)}</td><td>${esc(w)}</td></tr>`).join('')}</tbody></table>`;
 }
 
+/* ---------- import a filed return (the website's Return View saved as PDF) ---------- */
+// Tax rules of earlier years, so a year recorded from its return shows the tax it actually had.
+const KNOWN_RULES = {
+  // Finance Act 2024 (income year 2024-25); checked against a filed AY 2025-26 return.
+  '2025-2026': {
+    thresholds: { general: 350000, women_senior: 400000, disabled_thirdgender: 475000, freedom_fighter: 500000 },
+    slabs: [{ upto: 100000, rate: 5 }, { upto: 400000, rate: 10 }, { upto: 500000, rate: 15 }, { upto: 500000, rate: 20 },
+      { upto: 2000000, rate: 25 }, { upto: '', rate: 30 }],
+    rebatePctInvestment: 15,
+  },
+};
+const rulesForYear = ay => ({ ...defaultRules(), ...clone(KNOWN_RULES[ay] || {}) });
+
+const isAmt = t => /^-?(\d{1,3}(,\d{2,3})+|\d+)(\.\d+)?$/.test(t);
+const isoDate = t => { const m = /^(\d{2})[/-](\d{2})[/-](\d{4})$/.exec(t || ''); return m ? `${m[3]}-${m[2]}-${m[1]}` : ''; };
+const titleCase = s => s.toLowerCase().replace(/(^|[\s.-])\S/g, c => c.toUpperCase());
+
+// Pages of [[x, text], ...] lines from /api/pdf-text -> lines with cells, minus the browser's print header and footer.
+function returnLines(pages) {
+  return pages.flatMap(p => p.map(cells => ({ cells: cells.map(([x, t]) => ({ x, t })), text: cells.map(c => c[1]).join(' ') })))
+    .filter(l => !/^about:blank \d+\/\d+$/.test(l.text) && !/^\d{1,2}\/\d{1,2}\/\d{2}, \d{1,2}:\d{2} [AP]M\b/.test(l.text));
+}
+// A table row's label (without its serial cell) and the amounts at its end.
+function lineLV(l) {
+  const ts = l.cells.map(c => c.t); const amts = [];
+  while (ts.length > 1 && isAmt(ts[ts.length - 1])) amts.unshift(num(ts.pop()));
+  if (ts.length > 1 && /^\d+\.$/.test(ts[0])) ts.shift();
+  return { label: ts.join(' '), amts };
+}
+function section(lines, startRe, endRe) {
+  const i = lines.findIndex(l => startRe.test(l.text));
+  if (i < 0) return [];
+  const j = lines.findIndex((l, k) => k > i && endRe.test(l.text));
+  return lines.slice(i, j < 0 ? undefined : j);
+}
+// Amount on the line whose label matches: null if there's no such line, 0 if the line has no amount.
+function amt(lines, re, { first = false } = {}) {
+  for (const l of lines) {
+    const { label, amts } = lineLV(l);
+    if (re.test(label)) return amts.length ? (first ? amts[0] : amts[amts.length - 1]) : 0;
+  }
+  return null;
+}
+// Rows of an attachment table. A row starts on a line that passes isStart; text wrapped onto the
+// following lines is added to the column it sits under.
+function tableRows(lines, isStart) {
+  const rows = []; let cur = null;
+  for (const l of lines) {
+    if (isStart(l)) { cur = l.cells.map(c => ({ ...c })); rows.push(cur); continue; }
+    if (!cur) continue;
+    for (const c of l.cells) {
+      const col = cur.reduce((b, k) => (Math.abs(k.x - c.x) < Math.abs(b.x - c.x) ? k : b));
+      col.t += ` ${c.t}`;
+    }
+  }
+  return rows.map(r => r.map(c => c.t));
+}
+
+function parseReturn(pages) {
+  const L = returnLines(pages);
+  if (!L.some(l => /^Statement of Income and Tax/i.test(l.text))) {
+    throw new Error(L.some(l => /^Acknowledgement Receipt/i.test(l.text))
+      ? "This is the acknowledgement receipt. Import the return itself: open the filed return's Return View on the website and save it as a PDF."
+      : "This doesn't look like an income tax return (IT-11GA). Use the PDF of the return from the website's Return View.");
+  }
+  const r = { warnings: [] };
+  const head = section(L, /./, /^Statement of Income and Tax/);
+  const cell1 = re => { const l = head.find(x => re.test(x.text)); return l && l.cells[1] ? l.cells[1].t : ''; };
+  const ay = /Assessment Year:\s*(\d{4})-(\d{4})/.exec(L.map(l => l.text).join('\n'));
+  if (!ay) throw new Error("Couldn't find the assessment year in the PDF.");
+  r.ay = `${ay[1]}-${ay[2]}`;
+  r.name = cell1(/^1\. Name of the Taxpayer/);
+  const tinLine = head.find(l => /^3\. TIN/.test(l.text));
+  r.tin = tinLine ? tinLine.cells.slice(1).map(c => c.t).join('').replace(/\D/g, '') : '';
+  r.serial = cell1(/^Serial No\. of Return/).replace(/\D/g, '');
+  r.submitted = isoDate(cell1(/^Date of Return Submission/));
+  const emp = head.map(l => /employer\S*\s+name.*?\):\s*(.+)$/i.exec(l.text)).find(Boolean);
+  r.employer = emp ? emp[1].trim() : '';
+
+  const main = section(L, /^Statement of Income and Tax/, /^Schedule\s*-?\s*1$|^Schedule\s*-?\s*5$|^IT-\s?10/);
+  const m = re => amt(main, re) ?? 0;
+  r.income = {
+    employment: m(/^Income from Employment/), rent: m(/^Income from Rent/), agriculture: m(/^Income from Agriculture/),
+    business: m(/^Income from Business/), capitalGain: m(/^Income from Capital Gain/), financial: m(/^Income from Financial Assets/),
+    other: m(/^Income from Other Sources/), firm: m(/^Share of Income from Firm/), minorSpouse: m(/^Income of Minor or Spouse/),
+    abroad: m(/^Taxable Income from Abroad/), total: m(/^Total Income \(Aggregate/),
+  };
+  r.tax = {
+    gross: m(/^Gross Tax on Taxable Income/), rebate: m(/^Tax Rebate/), net: m(/^Net Tax after Rebate/), minimum: m(/^Minimum Tax/),
+    payable: m(/^Tax Payable/), envSurcharge: amt(main, /^\(c\) Environmental Surcharge/, { first: true }) ?? 0,
+    delayInterest: m(/^Delay Interest/), totalPayable: m(/^Total Amount Payable/),
+  };
+  r.pay = {
+    tds: m(/^Tax Deducted or Collected at Source/), advance: m(/^Advance Tax paid/), refundAdjusted: m(/^Adjustment of Tax Refund/),
+    withReturn: m(/^Tax Paid with this Return/), total: m(/^Total Tax Paid and Adjusted/), exemptIncome: m(/^Tax Exempted \/ Tax Free Income/),
+  };
+
+  // Schedule 1: part (a) for government pay scale, part (b) for everyone else. Rows before the total are the salary items.
+  const salaryRows = (sec, totalRe) => {
+    const out = []; let total = null, exempt = null;
+    for (const l of sec) {
+      const { label, amts } = lineLV(l);
+      const n = /^(\d+)\.\s*(.+)$/.exec(label);
+      if (!n || !amts.length) continue;
+      if (totalRe.test(n[2])) { total = amts[0]; if (amts.length === 3) exempt = amts[1]; break; }
+      if (amts[0]) out.push({ name: n[2].replace(/\s*\(provide detail\)/i, ''), amount: amts[0] });
+    }
+    return { items: out, total, exempt };
+  };
+  const govt = salaryRows(section(L, /^a\. This part is applicable for employees receiving salary under government/, /^b\. This part/), /^Total$/);
+  const priv = section(L, /^b\. This part is applicable for employees other than/, /^Schedule\s*-?\s*5$|^IT-\s?10|^Statement of Expenses/);
+  const pv = salaryRows(priv, /^Total Salary Received/);
+  const sal = pv.items.length || pv.total ? pv : govt;
+  r.salary = { items: sal.items, total: sal.total ?? sum(sal.items.map(x => x.amount)),
+    exempt: amt(priv, /^14\. Exempted Amount/) ?? sal.exempt ?? r.pay.exemptIncome };
+
+  const s5 = section(L, /^Schedule\s*-?\s*5$/, /^IT-\s?10|^Statement of Expenses/);
+  r.investments = [];
+  s5.forEach((l, i) => {
+    let { label, amts } = lineLV(l);
+    if (!/^\d+\.$/.test(l.cells[0]?.t) || !amts[0] || /^Total Investment|^Amount of Tax Rebate/.test(label)) return;
+    for (let k = i + 1; k < s5.length && s5[k].cells.length === 1 && !/^\d+\.$/.test(s5[k].cells[0].t); k++) label += ` ${s5[k].text}`; // wrapped label
+    r.investments.push({ line: parseInt(l.cells[0].t, 10), label, amount: amts[0] });
+  });
+  r.investmentTotal = amt(s5, /^Total Investment/) ?? sum(r.investments.map(x => x.amount));
+
+  const bb = section(L, /^Statement of Expenses Relating to Lifestyle/, /^Verification$/);
+  const b = re => amt(bb, re);
+  r.lifestyle = bb.length ? {
+    food: b(/^Personal and family fooding/), housing: b(/^Housing Expense/), transport: b(/^Personal Transport/),
+    utility: b(/^Utility Expense/), education: b(/^Education Expense/), travel: b(/^Personal Expense for Local and Foreign Travel/),
+    festival: b(/^Festival and Other Special/), tax: b(/^Tax Deducted \/ Collected at Source/), interest: b(/^Interest Paid on Personal Loan/),
+    total: b(/^Total:?$/),
+  } : null;
+
+  const w = section(L, /^Statement of Assets, Liabilities and Expenses/, /^Verification$/);
+  const a = re => amt(w, re) ?? 0;
+  const orn = w.map(l => /^\(h\) Ornaments.*\(([^)]*\d[^)]*)\)/i.exec(lineLV(l).label)).find(Boolean);
+  r.wealth = {
+    incomeShown: a(/^\(a\) Total Income Shown/), exempt: a(/^\(b\) Tax Exempted Income/), receipts: a(/^\(c\) Receipt of Gift/),
+    prevNW: a(/^2\. Net Wealth as on Last Date/), lifestyle: a(/^\(a\) Expense relating to Lifestyle/), otherOutflow: a(/^\(b\) Gift \/ Expenses \/ Loss/),
+    netWealth: a(/^5\. Net Wealth at the Last Date/), totalAssets: amt(w, /^10\. Total Assets/) ?? a(/^Total Asse?ss?ts inside Bangladesh/),
+    liabs: { inst: a(/^\(a\) Institutional Liabilities/), noninst: a(/^\(b\) Non-Institutional Liabilities/), other: a(/^\(c\) Other Liabilities/) },
+    assets: {
+      business: a(/^\(a\) Total Asset of Business/) - a(/^Less: Business Liabilities/) + a(/^\(b\) Director/) + a(/^\(c\) Business Capital/),
+      nonagri: a(/^\(d\) Non-Agricultural/), agri: a(/^\(e\) Agricultural/), shares: a(/^\(i\) Share/), sanchay: a(/^\(ii\) Sanchay/),
+      loan: a(/^\(iii\) Loan Given/), deposit: a(/^\(iv\) Savings Deposit/), pf: a(/^\(v\) Provident Fund/), otherinv: a(/^\(vi\) Other Investment/),
+      vehicle: a(/^\(g\) Motor Vehicle/), ornaments: a(/^\(h\) Ornaments/), furniture: a(/^\(i\) Furniture/), otherassets: a(/^\(j\) Other Assets/),
+      bank: a(/^\(i\) Bank Balance/), cash: a(/^\(ii\) Cash in Hand$/), others: a(/^\(iii\) Others/), abroad: a(/^9\. Assets Outside Bangladesh/),
+    },
+    ornamentQty: orn && !/^mention/i.test(orn[1]) ? orn[1] : '',
+  };
+
+  // Attachments: other financial assets, bank accounts, tax challans
+  const fin = section(L, /^Other Financial Assets$/, /^Bank account\/Card\/Electronic Cash$|^Source Tax, AIT|^PARTICULARS OF (?!FINANCIAL)/i);
+  r.otherFinancial = tableRows(fin, l => /^\d+$/.test(l.cells[0].t) && l.cells.length >= 3 && isAmt(l.cells[l.cells.length - 1].t))
+    .map(c => ({ desc: c.length >= 5 ? `${c[1]} (${c[3]})` : c.slice(1, -1).join(' '), acq: /purchas/i.test(c[2] || '') ? 'Purchase' : /gift/i.test(c[2] || '') ? 'Gift' : /inherit/i.test(c[2] || '') ? 'Inheritance' : '', amount: num(c[c.length - 1]) }));
+  const bank = section(L, /^Bank account\/Card\/Electronic Cash$/, /^Source Tax, AIT|^PARTICULARS OF|^Tax Paid with Return/i);
+  r.bankAccounts = tableRows(bank, l => /^\d+$/.test(l.cells[0].t) && l.cells.length >= 3 && isAmt(l.cells[l.cells.length - 1].t))
+    .map(c => { const [type, bankName, acct] = c.slice(1, -1); return { type, bank: bankName || '', account: acct || '', amount: num(c[c.length - 1]) }; });
+  const isChallanRow = l => /^\d{4}-\d{8,}$/.test(l.cells[0].t);
+  r.challans = tableRows(section(L, /^Source Tax, AIT and Regular Tax Claim/, /^Tax Paid with Return$/), isChallanRow)
+    .map(c => ({ challan: c[0], date: isoDate(c[1]), purpose: c[2] || '', authority: c[3] || '', amount: num(c[c.length - 1]) }));
+  r.paidWithReturn = tableRows(section(L, /^Tax Paid with Return$/, /^$/), isChallanRow)
+    .map(c => ({ challan: c[0], date: isoDate(c[1]), amount: num(c.slice(2).find(isAmt) || 0) }));
+  return r;
+}
+
+// Fill the past-year form from a parsed return; the details the form has no fields for ride along in d.imp.
+function draftFromReturn(r, fileName) {
+  const d = blankPastDraft();
+  const w = r.wealth;
+  Object.assign(d, { ayStart: r.ay.slice(0, 4), incomeShown: w.incomeShown, exempt: w.exempt, receipts: w.receipts, prevNW: w.prevNW,
+    lifestyle: w.lifestyle, otherOutflow: w.otherOutflow, imp: r, fileName });
+  for (const k of Object.keys(d.liabs)) d.liabs[k].amount = w.liabs[k] || 0;
+  for (const k of Object.keys(d.assets)) d.assets[k].amount = w.assets[k] || 0;
+  d.assets.ornaments.qty = w.ornamentQty;
+  // rows from the attachments replace a line's single row when they add up to it
+  const split = (k, rows) => {
+    if (!rows.length || Math.round(sum(rows.map(x => x.amount))) !== Math.round(w.assets[k])) return;
+    if (rows.length === 1) Object.assign(d.assets[k], { desc: rows[0].desc, acq: rows[0].acq || '' });
+    else d.assets[k].rows = rows;
+  };
+  split('bank', r.bankAccounts.map(x => ({ desc: [/^bank account$/i.test(x.type) ? '' : x.type, x.bank, x.account].filter(Boolean).join(' '), amount: x.amount })));
+  split('otherinv', r.otherFinancial);
+  return d;
+}
+
+async function importReturnPdf(file) {
+  if (!file) return;
+  try {
+    const res = await fetch('/api/pdf-text', { method: 'POST', headers: { 'Content-Type': 'application/pdf' }, body: file });
+    const out = await res.json();
+    if (!res.ok) throw new Error(out.error || 'The server could not read the file.');
+    pastDraft = draftFromReturn(parseReturn(out.pages), file.name);
+    render();
+    $('#pastImport')?.scrollIntoView({ block: 'start' });
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+// What the imported year will look like, checked against the return's own figures.
+function importChecks(d) {
+  const r = d.imp; const ay = `${d.ayStart}-${num(d.ayStart) + 1}`; const lbl = yearInfo(ay).ayLabel;
+  const doc = yearFromReturn(d); const c = compute(doc);
+  const out = [];
+  const same = (a, b2) => Math.round(a) === Math.round(b2);
+  if (state.profile.tin && r.tin && state.profile.tin.replace(/\D/g, '') !== r.tin) out.push(['bad', `This return is for TIN ${r.tin} (${r.name}), but ${personName() || 'this person'}'s TIN is ${state.profile.tin}. Switch to the right person before saving.`]);
+  if (years.includes(ay)) out.push(['warn', `${lbl} is already in the app. Saving replaces it (a backup is kept).`]);
+  const taxOk = same(c.grossTax, r.tax.gross) && same(c.rebate, r.tax.rebate) && same(c.netTax, r.tax.payable);
+  out.push(taxOk ? ['ok', `Tax matches the return: gross ${fmt(r.tax.gross)}, rebate ${fmt(r.tax.rebate)}, payable ${fmt(r.tax.payable)}.`]
+    : ['warn', `With the app's tax rules for ${lbl}, gross tax is ${fmt(c.grossTax)}, rebate ${fmt(c.rebate)} and tax payable ${fmt(c.netTax)}; the return says ${fmt(r.tax.gross)}, ${fmt(r.tax.rebate)} and ${fmt(r.tax.payable)}. After saving, open ${lbl} and adjust Settings → Tax rules so the All years tab shows the right tax.`]);
+  if (!same(c.totalIncome, r.income.total)) out.push(['warn', `Total income works out to ${fmt(c.totalIncome)} here, but the return says ${fmt(r.income.total)}.`]);
+  out.push(Math.round(c.difference) === 0 ? ['ok', 'Assets & liabilities balance (difference 0), and net wealth on 30 June is ' + fmt(c.closingNW) + '.']
+    : ['warn', `Assets & liabilities don't balance in the app (difference ${fmt(c.difference)}). Check the figures below against the return.`]);
+  if (doc.expenses.categories.find(x => x.id === 'utility_electricity').tracked)
+    out.push(['note', `The return has utilities as one line (${fmt(r.lifestyle.utility)}); it goes under Electricity, since the website now splits utilities into three rows.`]);
+  return { out, doc, c };
+}
+
+function importReviewHtml(d) {
+  const r = d.imp; const { out, doc, c } = importChecks(d);
+  const cls = { ok: 'ok', warn: 'warn', bad: 'bad', note: 'help' };
+  const row = (label, v) => `<tr><td>${label}</td><td class="r">${typeof v === 'number' ? fmt(v) : esc(v)}</td></tr>`;
+  const det = [];
+  det.push(row('Taxpayer', `${r.name}${r.tin ? `, TIN ${r.tin}` : ''}`));
+  if (r.submitted) det.push(row('Submitted', `${r.submitted}${r.serial ? `, return no. ${r.serial}` : ''}`));
+  if (doc.salary.employer) det.push(row('Employer', doc.salary.employer));
+  doc.salary.components.forEach(x => det.push(row(`Salary: ${esc(x.name)}`, x.amount)));
+  if (r.salary.exempt) det.push(row('Salary: tax exempted', r.salary.exempt));
+  doc.otherIncome.forEach(x => det.push(row(`Other income: ${esc(x.source)}`, x.gross)));
+  det.push(row('Tax deducted at source (salary)', doc.salary.tds));
+  if (c.otherIncomeTds) det.push(row('Tax deducted at source (other income)', c.otherIncomeTds));
+  if (c.ait) det.push(row('Advance tax', c.ait));
+  doc.investments.other.forEach(x => det.push(row(`Rebate: ${esc(x.desc)}`, x.amount)));
+  if (r.lifestyle) {
+    doc.expenses.categories.filter(x => num(x.tracked)).forEach(x => det.push(row(`Expense: ${esc(x.name)}`, x.tracked)));
+    if (doc.prevYearTaxPaid) det.push(row("Expense: previous years' tax paid in the year", doc.prevYearTaxPaid));
+    if (doc.expenses.loanInterest) det.push(row('Expense: loan interest', doc.expenses.loanInterest));
+  }
+  if (doc.submission.taxPaid) det.push(row('Paid with the return', `${fmt(num(doc.submission.taxPaidAmount))} on ${doc.submission.taxPaidDate}, challan ${doc.submission.taxPaidChallan}`));
+  return `<div id="pastImport" class="ok">Read <b>${esc(d.fileName)}</b>: the ${yearInfo(r.ay).ayLabel} return. Check the figures, then click <b>Save as that year</b> at the bottom.</div>
+    ${out.map(([k, t]) => `<div class="${cls[k]}">${esc(t)}</div>`).join('')}
+    <details class="tips"><summary>Also from the return: income, tax, rebate and expenses (${det.length} items)</summary><div>
+      <table class="grid"><tbody>${det.join('')}</tbody></table></div></details>`;
+}
+
 let pastDraft = null; // transient: the "record a past year" form
 function blankPastDraft() {
   return {
@@ -1871,18 +2119,84 @@ function yearFromReturn(d) {
   doc.openingNetWealthOverride = num(d.prevNW);
   doc.expenses.categories.find(x => x.id === 'other').tracked = num(d.lifestyle);
   doc.expenses.otherOutflow.loss = num(d.otherOutflow);
+  const assetRow = (cat, description, qty, acq, amount) => ({ id: uid(), category: cat, description, qty, acq, opening: 0, closing: amount, change: amount, byChange: false });
   doc.assets = PAPER_ASSET_LINES.filter(([k]) => num(d.assets[k].amount) || d.assets[k].desc || d.assets[k].qty)
-    .map(([k, , cat]) => ({ id: uid(), category: cat, description: d.assets[k].desc, qty: d.assets[k].qty, acq: d.assets[k].acq,
-      opening: 0, closing: num(d.assets[k].amount), change: num(d.assets[k].amount), byChange: false }));
+    .flatMap(([k, , cat]) => {
+      const x = d.assets[k];
+      if (x.rows && Math.round(sum(x.rows.map(y => y.amount))) === Math.round(num(x.amount))) return x.rows.map(y => assetRow(cat, y.desc, '', y.acq || '', y.amount));
+      return [assetRow(cat, x.desc, x.qty, x.acq, num(x.amount))];
+    });
   doc.liabilities = PAPER_LIAB_LINES.filter(([k]) => num(d.liabs[k].amount))
     .map(([k, label, cat]) => ({ id: uid(), category: cat, description: label.replace(/^\S+ /, ''), opening: 0, closing: num(d.liabs[k].amount), change: num(d.liabs[k].amount), byChange: false }));
+  const lbl = yearInfo(ay).ayLabel;
+  const r = d.imp; // the parsed PDF, when the figures were imported
+  const detailed = r ? applyImportedReturn(doc, r, d) : false;
   const ye = yearEndSnapshot(doc);
-  Object.assign(ye, { expenses: {}, lifestyle: null, taxPaid: null, loanInterest: null, envSurcharge: null,
-    finalTotal: Math.round(num(d.lifestyle)), balance: 0, savedAt: `from the ${yearInfo(ay).ayLabel} return` });
+  if (detailed) ye.savedAt = `from the ${lbl} return`;
+  else {
+    Object.assign(ye, { expenses: {}, lifestyle: null, taxPaid: null, loanInterest: null, envSurcharge: null,
+      finalTotal: Math.round(num(d.lifestyle)), balance: 0, savedAt: `from the ${lbl} return` });
+  }
   doc.yearEnd = ye;
   doc.locked = true;
-  doc.submission.notes = `Recorded from the ${yearInfo(ay).ayLabel} return (IT-10B totals). Only totals are known: expense relating to lifestyle ${fmt(num(d.lifestyle))} is under "Any other expenses", and per-asset opening values aren't known.`;
+  if (!r) doc.submission.notes = `Recorded from the ${lbl} return (IT-10B totals). Only totals are known: expense relating to lifestyle ${fmt(num(d.lifestyle))} is under "Any other expenses", and per-asset opening values aren't known.`;
   return doc;
+}
+
+// Income, tax, rebate, expenses and filing details from an imported return. Returns true when the
+// return's lifestyle statement (IT-10BB) adds up, so the expenses are itemised rather than one lump.
+function applyImportedReturn(doc, r, d) {
+  const lbl = yearInfo(doc.assessmentYear).ayLabel;
+  doc.rules = rulesForYear(doc.assessmentYear);
+  doc.profile = { ...doc.profile, name: doc.profile.name || titleCase(r.name), tin: r.tin || doc.profile.tin };
+  doc.salary.employer = r.employer || r.challans.find(x => /salary/i.test(x.purpose))?.authority || '';
+  doc.salary.components = r.salary.items.length
+    ? r.salary.items.map(x => ({ id: uid(), name: x.name, amount: x.amount }))
+    : r.salary.total ? [{ id: uid(), name: 'Total salary received (from the return)', amount: r.salary.total }] : [];
+  const inc = r.income;
+  doc.otherIncome = [
+    ['financial', 'Bank interest (savings / FDR)', 'Income from financial assets'], ['rent', 'Rental income', 'Income from rent'],
+    ['agriculture', 'Other income', 'Income from agriculture'], ['business', 'Other income', 'Income from business'],
+    ['capitalGain', 'Other income', 'Income from capital gain'], ['other', 'Other income', 'Income from other sources'],
+    ['firm', 'Other income', 'Share of income from firm or AoP'], ['minorSpouse', 'Other income', 'Income of minor or spouse'],
+    ['abroad', 'Other income', 'Taxable income from abroad'],
+  ].filter(([k]) => num(inc[k])).map(([k, type, source]) => ({ id: uid(), type, source, gross: inc[k], tds: 0 }));
+  // tax deducted at source: salary challans by purpose; the rest of line 20 belongs to other income
+  const salaryTds = sum(r.challans.filter(x => /salary/i.test(x.purpose)).map(x => x.amount));
+  const otherTds = Math.max(0, r.pay.tds - salaryTds);
+  if (otherTds && doc.otherIncome.length) { doc.otherIncome[0].tds = otherTds; doc.salary.tds = salaryTds; }
+  else doc.salary.tds = r.pay.tds;
+  doc.advanceTax = r.pay.advance ? [{ id: uid(), desc: 'Advance tax (from the return)', amount: r.pay.advance }] : [];
+  doc.investments.other = r.investments.map(x => ({ id: uid(), desc: `${x.label} (Schedule 5 line ${x.line})`, amount: x.amount }));
+  doc.expenses.envSurcharge = r.tax.envSurcharge;
+
+  const ls = r.lifestyle;
+  const parts = ls ? ['food', 'housing', 'transport', 'utility', 'education', 'travel', 'festival', 'tax', 'interest'].map(k => num(ls[k])) : [];
+  const detailed = !!ls && Math.round(sum(parts)) === Math.round(num(ls.total)) && Math.round(num(ls.total)) === Math.round(num(d.lifestyle));
+  const cats = Object.fromEntries(doc.expenses.categories.map(x => [x.id, x]));
+  // the lifestyle total includes the tax paid during the year, which the app keeps separately
+  cats.other.tracked = Math.max(0, num(d.lifestyle) - r.pay.tds - r.pay.advance);
+  if (detailed) {
+    cats.other.tracked = 0;
+    for (const [k, id] of [['food', 'food'], ['housing', 'housing'], ['transport', 'transport'], ['utility', 'utility_electricity'],
+      ['education', 'education'], ['travel', 'travel'], ['festival', 'festival']]) cats[id].tracked = num(ls[k]);
+    doc.expenses.loanInterest = num(ls.interest);
+    // line 8 is tax deducted during the year plus earlier years' tax paid during it
+    doc.prevYearTaxPaid = Math.max(0, num(ls.tax) - r.pay.tds - r.pay.advance);
+  }
+
+  const sub = doc.submission;
+  if (r.submitted) Object.assign(sub, { submitted: true, date: r.submitted });
+  if (r.serial) sub.ackNo = r.serial;
+  if (r.pay.withReturn) {
+    const ch = r.paidWithReturn;
+    Object.assign(sub, { taxPaid: true, taxPaidAmount: r.pay.withReturn, taxPaidDate: ch.map(x => x.date).sort().pop() || '', taxPaidChallan: ch.map(x => x.challan).join(', ') });
+  }
+  sub.notes = `Imported from the ${lbl} return${d.fileName ? ` (${d.fileName})` : ''} on ${todayISO()}.`
+    + (detailed ? (num(ls.utility) ? ` The return's utility expense (${fmt(num(ls.utility))}) is all under Electricity.` : '')
+      : ` Expense relating to lifestyle ${fmt(num(d.lifestyle))} is under "Any other expenses".`)
+    + ' Opening values per asset aren\'t known, only net wealth.';
+  return detailed;
 }
 
 async function savePastYear() {
@@ -1890,27 +2204,48 @@ async function savePastYear() {
   if (!(y > 2000 && y < 2100)) { alert('Enter the assessment year, e.g. 2025 for AY 2025-26.'); return; }
   const ay = `${y}-${y + 1}`; const lbl = yearInfo(ay).ayLabel;
   const chk = pastDraftCalc(d);
+  const tin = d.imp?.tin; const myTin = state.profile.tin.replace(/\D/g, '');
+  if (tin && myTin && tin !== myTin && !confirm(`This return is for TIN ${tin}, not ${personName()}'s (${state.profile.tin}). Save it under ${personName()} anyway?`)) return;
   if (chk.diff !== 0 && !confirm(`The figures don't add up (difference ${fmt(chk.diff)}). Save anyway?`)) return;
   if (years.includes(ay) && !confirm(`${lbl} already exists in the app. Replace it with these figures? (A backup is kept.)`)) return;
   const doc = yearFromReturn(d);
   await save();
   await api(yearsUrl(ay), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(doc) });
   if (!years.includes(ay)) { years.push(ay); years.sort(); }
-  pastDraft = null;
-  if (ay === prevAY(state.assessmentYear)) {
-    prevDoc = doc;
-    if (!state.locked && confirm(`${lbl} saved. Update ${yearInfo(state.assessmentYear).ayLabel}'s opening values from it now?`)) {
-      refreshOpeningFrom(doc); scheduleSave();
-    }
-  } else alert(`${lbl} saved.`);
+  pastDraft = null; historyData = null;
+  if (ay === state.assessmentYear) { await loadYear(ay); alert(`${lbl} saved.`); return; } // the open year was replaced
+  const offers = ay === prevAY(state.assessmentYear) && !state.locked ? followingYearUpdates(doc) : [];
+  if (ay === prevAY(state.assessmentYear)) prevDoc = doc;
+  if (offers.length && confirm(`${lbl} saved. Update ${yearInfo(state.assessmentYear).ayLabel} from it now?\n\n${offers.map(o => `• ${o.text}`).join('\n')}`)) {
+    offers.forEach(o => o.apply()); scheduleSave();
+  } else if (!offers.length) alert(`${lbl} saved.`);
   renderYearSelect(); render();
 }
 
+// What the open year can take from the year before it, just recorded from its return.
+function followingYearUpdates(prev) {
+  const out = []; const cur = yearInfo(state.assessmentYear); const sub = prev.submission;
+  out.push({ text: `Opening values and previous net wealth (${fmt(yearEndOf(prev).closingNetWealth)})`, apply: () => refreshOpeningFrom(prev) });
+  const paid = num(sub.taxPaidAmount);
+  if (sub.taxPaid && sub.taxPaidDate >= cur.start && sub.taxPaidDate <= cur.end && Math.round(num(state.prevYearTaxPaid)) !== Math.round(paid)) {
+    out.push({ text: `Tax paid with that return, ${fmt(paid)} on ${sub.taxPaidDate}, as "Tax, surcharge or other amount" paid this year (now ${fmt(num(state.prevYearTaxPaid))})`, apply: () => { state.prevYearTaxPaid = paid; } });
+  }
+  if (!state.profile.tin && prev.profile.tin) out.push({ text: `TIN ${prev.profile.tin}`, apply: () => { state.profile.tin = prev.profile.tin; } });
+  if (!state.salary.employer && prev.salary.employer) out.push({ text: `Employer: ${prev.salary.employer}`, apply: () => { state.salary.employer = prev.salary.employer; } });
+  return out;
+}
+
 function pastReturnForm() {
-  if (!pastDraft) return `<p><button class="secondary" data-action="past-start" data-lock-safe="1">Record a past year from its return</button></p>`;
+  const picker = `<input type="file" id="returnPdf" accept="application/pdf,.pdf" data-lock-safe="1" hidden>`;
+  if (!pastDraft) {
+    return `<p><button data-action="past-import" data-lock-safe="1">Import a return PDF</button>
+      <button class="secondary" data-action="past-start" data-lock-safe="1">Enter the figures by hand</button>${picker}</p>
+      <p class="muted">To get the PDF: on etaxnbr.gov.bd open the filed return's <b>Return View</b>, print it and choose <b>Save as PDF</b>. The file is read on this computer and isn't kept.</p>`;
+  }
   const n = path => inp(path, { type: 'num' });
   const acqOpts = { '': '—', Purchase: 'Purchase', Gift: 'Gift', Inheritance: 'Inheritance', Other: 'Other' };
-  return `<div class="help"><p>Type the figures from the return's <b>statement of assets, liabilities and expenses (IT-10B)</b>. This creates that year in the app, locked, with its year-end values saved, so the following year can take its opening values from it.</p></div>
+  const rowsNote = k => { const rows = pastDraft.assets[k].rows; return rows && rows.length > 1 ? `<div class="muted">${rows.length} rows: ${rows.map(y => `${esc(y.desc)} ${fmt(y.amount)}`).join('; ')}</div>` : ''; };
+  return `${pastDraft.imp ? importReviewHtml(pastDraft) : `<div class="help"><p>Type the figures from the return's <b>statement of assets, liabilities and expenses (IT-10B)</b>. This creates that year in the app, locked, with its year-end values saved, so the following year can take its opening values from it.</p></div>`}
     <div class="row">${field('Assessment year starting (e.g. 2025 for AY 2025-26)', `<input data-bind="~ayStart" value="${esc(pastDraft.ayStart)}" inputmode="numeric">`)}</div>
     <table class="grid"><tbody>
       <tr><td>1(a) Total income shown in return</td><td>${n('~incomeShown')}</td></tr>
@@ -1923,7 +2258,7 @@ function pastReturnForm() {
     </tbody></table>
     <h3 style="margin-top:14px">8 Particulars of assets</h3>
     <table class="grid"><thead><tr><th>Line</th><th>Description</th><th>Qty</th><th>Acquired</th><th class="r">Amount</th></tr></thead><tbody>
-      ${PAPER_ASSET_LINES.map(([k, label]) => `<tr><td>${esc(label)}</td><td>${inp(`~assets.${k}.desc`)}</td><td>${inp(`~assets.${k}.qty`, { ph: 'e.g. 10 bhori' })}</td><td>${sel(`~assets.${k}.acq`, acqOpts)}</td><td>${n(`~assets.${k}.amount`)}</td></tr>`).join('')}
+      ${PAPER_ASSET_LINES.map(([k, label]) => `<tr><td>${esc(label)}</td><td>${pastDraft.assets[k].rows?.length > 1 ? rowsNote(k) : inp(`~assets.${k}.desc`)}</td><td>${inp(`~assets.${k}.qty`, { ph: 'e.g. 10 bhori' })}</td><td>${sel(`~assets.${k}.acq`, acqOpts)}</td><td>${n(`~assets.${k}.amount`)}</td></tr>`).join('')}
     </tbody></table>
     <dl class="sum">
       <dt>Total source of fund (1)</dt><dd data-dcalc="source"></dd>
@@ -1932,7 +2267,7 @@ function pastReturnForm() {
       <dt class="total">Total assets (8 + 9)</dt><dd class="total" data-dcalc="assets"></dd>
     </dl>
     <p data-dcalc="status" class="muted"></p>
-    <p><button data-action="past-save" data-lock-safe="1">Save as that year</button> <button class="secondary" data-action="past-cancel" data-lock-safe="1">Cancel</button></p>`;
+    <p><button data-action="past-save" data-lock-safe="1">Save as that year</button> <button class="secondary" data-action="past-cancel" data-lock-safe="1">Cancel</button>${picker}</p>`;
 }
 
 /* ---------- checks on assets ---------- */
@@ -2039,7 +2374,7 @@ views.settings = () => {
   </section>
   <section class="panel">
     <h3>Record a past year from its return</h3>
-    <p class="muted">For a year you filed before using this app. Enter the totals from that return so the next year starts from the right opening values.</p>
+    <p class="muted">For a year you filed before using this app. Import the filed return, or enter its totals, so that year shows in All years and the next year starts from the right opening values.</p>
     ${pastReturnForm()}
   </section>
   <section class="panel">
@@ -2234,6 +2569,7 @@ document.addEventListener('input', e => {
 });
 document.addEventListener('change', e => {
   if (e.target.id === 'csvFile') return loadCsvFile(e.target.files[0]);
+  if (e.target.id === 'returnPdf') { const f = e.target.files[0]; e.target.value = ''; return importReturnPdf(f); }
   if (e.target.id === 'yearSelect') return loadYear(e.target.value);
   if (e.target.id === 'personSelect') return switchPerson(e.target.value);
   if (e.target.id === 'balAsset') { bal.assetId = e.target.value; $('#balPreview').innerHTML = balancePreview().html; return; }
@@ -2264,7 +2600,7 @@ document.addEventListener('click', async e => {
     e.preventDefault(); tab = b.dataset.tab; if (tab === 'history') historyData = null;
     history.replaceState(null, '', `#${tab}`); render(); window.scrollTo(0, 0); return;
   }
-  if (state.locked && !['month', 'copy', 'print', 'export-year', 'export-all', 'open-year', 'create-year', 'save-yearend', 'past-start', 'past-cancel', 'past-save', 'rename-person', 'remove-person', 'confirm-paid', 'undo-paid', 'confirm-submitted', 'undo-submitted', 'ack-sent', 'ack-undo', 'ack-add-bank', 'ack-del-bank', 'ack-suggest'].includes(a)) return;
+  if (state.locked && !['month', 'copy', 'print', 'export-year', 'export-all', 'open-year', 'create-year', 'save-yearend', 'past-start', 'past-import', 'past-cancel', 'past-save', 'rename-person', 'remove-person', 'confirm-paid', 'undo-paid', 'confirm-submitted', 'undo-submitted', 'ack-sent', 'ack-undo', 'ack-add-bank', 'ack-del-bank', 'ack-suggest'].includes(a)) return;
   if (a === 'add') { getPath(state, b.dataset.list).push(TPL[b.dataset.tpl]()); }
   else if (a === 'del') {
     const list = getPath(state, b.dataset.list); const item = list[+b.dataset.idx];
@@ -2296,6 +2632,7 @@ document.addEventListener('click', async e => {
   }
   else if (a === 'bal-apply') { if (!applyBalance()) return; }
   else if (a === 'past-start') { pastDraft = blankPastDraft(); render(); return; }
+  else if (a === 'past-import') { $('#returnPdf').click(); return; }
   else if (a === 'past-cancel') { pastDraft = null; render(); return; }
   else if (a === 'past-save') { return savePastYear(); }
   else if (a === 'save-yearend') {

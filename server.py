@@ -19,11 +19,14 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import pdftext
+
 ROOT = Path(__file__).resolve().parent
 STATIC = ROOT / "static"
 DATA = ROOT / "data"
 PEOPLE = DATA / "people"
 REMOVED = DATA / "removed"
+MAX_PDF_BYTES = 20 * 1024 * 1024
 YEAR_RE = re.compile(r"^\d{4}-\d{4}$")  # e.g. 2026-2027 (assessment year)
 PID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 MAX_BACKUPS_PER_YEAR = 30
@@ -153,6 +156,8 @@ class Handler(SimpleHTTPRequestHandler):
         return super().do_GET()
 
     def do_POST(self):
+        if self.path.split("?")[0] == "/api/pdf-text":
+            return self.pdf_text()
         # add a person: {"name": "..."}
         if self.path.split("?")[0] not in ("/api/people", "/api/people/"):
             return self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
@@ -166,6 +171,19 @@ class Handler(SimpleHTTPRequestHandler):
         person_dir(pid).mkdir(parents=True)
         write_json(person_dir(pid) / "person.json", {"name": name})
         return self.send_json({"id": pid, "name": name, "years": []})
+
+    def pdf_text(self):
+        # text of an uploaded PDF (a filed return), read in memory and never written to disk
+        length = int(self.headers.get("Content-Length", 0))
+        if not 0 < length <= MAX_PDF_BYTES:
+            return self.send_json({"error": "The file is empty or larger than 20 MB."}, HTTPStatus.BAD_REQUEST)
+        data = self.rfile.read(length)
+        try:
+            return self.send_json({"pages": pdftext.extract(data)})
+        except pdftext.PDFError as e:
+            return self.send_json({"error": f"Couldn't read the PDF: {e}."}, HTTPStatus.BAD_REQUEST)
+        except Exception:  # malformed or unusual PDF
+            return self.send_json({"error": "Couldn't read the PDF. Save the return from the website's Return View as a PDF and try that file."}, HTTPStatus.BAD_REQUEST)
 
     def do_DELETE(self):
         # remove a person: their folder moves to data/removed/, nothing is deleted
