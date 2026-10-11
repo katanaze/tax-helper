@@ -166,7 +166,7 @@ function blankYear(ay) {
     otherReceipts: [],
     prevYearTaxPaid: 0,
     expenses: { layout: 2, categories: defaultExpenseCats(), loanInterest: 0, envSurcharge: 0, otherOutflow: { loss: 0, gifts: 0 }, mapping: {}, csv: { dateCol: '', amountCol: '', catCol: '', dateFmt: 'auto' } },
-    checklist: { done: {}, custom: [] },
+    checklist: { done: {}, na: {}, custom: [] },
     entered: {},
     submission: { date: '', ackNo: '', notes: '', submitted: false, taxPaid: false, taxPaidAmount: '', taxPaidDate: '', taxPaidChallan: '', ackEmployer: { sent: false, date: '' }, ackBanks: [] },
     previous: null,
@@ -426,10 +426,12 @@ function compute(s) {
 
   // Checklist progress
   const items = checklistDef(s).flatMap(sec => sec.items).concat(s.checklist.custom.map(x => ({ id: x.id })));
-  c.checkTotal = items.length;
-  c.checkDone = items.filter(i => s.checklist.done[i.id]).length;
-  c.checkPct = c.checkTotal ? Math.round(c.checkDone / c.checkTotal * 100) : 0;
-  c.checkLabel = `${c.checkDone} of ${c.checkTotal} done`;
+  const applies = items.filter(i => !s.checklist.na[i.id]); // "not applicable" items don't count
+  c.checkNA = items.length - applies.length;
+  c.checkTotal = applies.length;
+  c.checkDone = applies.filter(i => s.checklist.done[i.id]).length;
+  c.checkPct = c.checkTotal ? Math.round(c.checkDone / c.checkTotal * 100) : 100;
+  c.checkLabel = `${c.checkDone} of ${c.checkTotal} done${c.checkNA ? ` · ${c.checkNA} not applicable` : ''}`;
 
   // Monthly tracker (flattened with an mo_ prefix for data-calc)
   const mo = monthlyCalc(s, c.eligibleInvestment);
@@ -546,6 +548,7 @@ function monthlyCalc(s, investmentFromTab) {
 }
 
 /* ---------- checklist ---------- */
+const ckState = (s, id) => (s.checklist.na[id] ? 'N/A' : s.checklist.done[id] ? 'Yes' : 'No');
 function checklistDef(s) {
   const y = yearInfo(s.assessmentYear);
   const i = (id, text) => ({ id, text });
@@ -1091,12 +1094,16 @@ function copyPrevMonth() {
 }
 
 views.checklist = () => {
-  const done = state.checklist.done;
-  const item = (id, text) => `<div class="check-item ${done[id] ? 'done' : ''}"><input type="checkbox" id="ck-${id}" data-bind="checklist.done.${id}" data-type="bool" data-rerender="1" ${done[id] ? 'checked' : ''}><label for="ck-${id}">${esc(text)}</label></div>`;
+  const { done, na } = state.checklist;
+  const naBtn = id => `<button class="na-toggle" data-action="ck-na" data-id="${id}" title="${na[id] ? 'This applies to me after all' : "Doesn't apply to me: leave it out of the progress"}">${na[id] ? 'Applies' : 'N/A'}</button>`;
+  const cls = id => (na[id] ? 'na' : done[id] ? 'done' : '');
+  const box = id => `<input type="checkbox" id="ck-${id}" data-bind="checklist.done.${id}" data-type="bool" data-rerender="1" ${done[id] && !na[id] ? 'checked' : ''} ${na[id] ? 'disabled' : ''}>`;
+  const item = (id, text) => `<div class="check-item ${cls(id)}">${box(id)}<label for="ck-${id}">${esc(text)}${na[id] ? ' <span class="na-tag">Not applicable</span>' : ''}</label>${naBtn(id)}</div>`;
   const secs = checklistDef(state).map(sec => `<section class="panel"><h3>${sec.section}</h3>${sec.items.map(i => item(i.id, i.text)).join('')}</section>`).join('');
-  const custom = state.checklist.custom.map((c, i) => `<div class="check-item ${done[c.id] ? 'done' : ''}"><input type="checkbox" data-bind="checklist.done.${c.id}" data-type="bool" data-rerender="1" ${done[c.id] ? 'checked' : ''}>${inp(`checklist.custom.${i}.text`, { ph: 'Your own item' })}<button class="icon" data-action="del" data-list="checklist.custom" data-idx="${i}">✕</button></div>`).join('');
+  const custom = state.checklist.custom.map((c, i) => `<div class="check-item ${cls(c.id)}">${box(c.id)}${inp(`checklist.custom.${i}.text`, { ph: 'Your own item' })}${naBtn(c.id)}<button class="icon" data-action="del" data-list="checklist.custom" data-idx="${i}">✕</button></div>`).join('');
   return `<h2>Checklist</h2>
     <div class="progress"><div id="progBar" style="width:0%"></div></div><p class="muted">${calc('checkLabel')}</p>
+    <p class="muted">Mark anything that doesn't apply to you as <b>N/A</b>: it's left out of the progress, so the checklist can reach 100%.</p>
     ${secs}
     <section class="panel"><h3>My items</h3><p class="muted">Custom items carry over to next year (unticked).</p>${custom}
     <button class="add" data-action="add" data-list="checklist.custom" data-tpl="custom">+ Add item</button></section>`;
@@ -1777,8 +1784,8 @@ function yearCSV(s) {
     ['Rebate', R(c.rebate)], ['Tax payable', R(c.netTax)], ['Tax deducted / paid', R(c.taxCredits)], [c.balanceLabel, R(c.balanceAbs)]);
 
   sec('Checklist', ['Section', 'Item', 'Done']);
-  for (const g of checklistDef(s)) g.items.forEach(i => rows.push([g.section, i.text, s.checklist.done[i.id] ? 'Yes' : 'No']));
-  s.checklist.custom.forEach(i => rows.push(['My items', i.text, s.checklist.done[i.id] ? 'Yes' : 'No']));
+  for (const g of checklistDef(s)) g.items.forEach(i => rows.push([g.section, i.text, ckState(s, i.id)]));
+  s.checklist.custom.forEach(i => rows.push(['My items', i.text, ckState(s, i.id)]));
   return toCSV(rows);
 }
 
@@ -2268,6 +2275,7 @@ document.addEventListener('click', async e => {
   else if (a === 'add-slab') state.rules.slabs.push({ upto: '', rate: 0 });
   else if (a === 'reset-rules') { if (!confirm('Reset all tax rules to the built-in defaults?')) return; state.rules = defaultRules(); }
   else if (a === 'clear-entered') state.entered = {};
+  else if (a === 'ck-na') { const na = state.checklist.na; if (na[b.dataset.id]) delete na[b.dataset.id]; else na[b.dataset.id] = true; }
   else if (a === 'print') return window.print();
   else if (a === 'copy') {
     await navigator.clipboard.writeText(b.dataset.value);

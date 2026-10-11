@@ -131,6 +131,11 @@ dl.sum .total { font-weight: 700; color: var(--text); background: var(--head); }
 .check-item input { margin-top: 3px; }
 .check-item.done label { color: var(--muted); text-decoration: line-through; }
 .check-item label { flex: 1; cursor: pointer; }
+.check-item.na label { color: var(--muted); }
+.check-item.na input[type=text] { color: var(--muted); }
+.na-tag { font-size: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 0 6px; margin-left: 6px; white-space: nowrap; }
+button.na-toggle { background: none; border: 1px solid var(--border); color: var(--muted); padding: 2px 8px; font-size: 12px; flex: none; }
+button.na-toggle:hover { color: var(--accent); border-color: var(--accent); }
 .sheet-row td:first-child { width: 40px; text-align: center; }
 .sheet-row.entered td { color: var(--muted); }
 .sheet-value { font-variant-numeric: tabular-nums; font-weight: 600; text-align: right; white-space: nowrap; }
