@@ -19,11 +19,33 @@ function setPath(obj, path, val) {
 }
 
 /* ---------- constants ---------- */
-const TABS = [
-  ['overview', 'Overview'], ['monthly', 'Salary income'], ['checklist', 'Checklist'], ['income', 'Income & tax'],
-  ['investments', 'Rebate'], ['expenses', 'Expenditure'], ['wealth', 'Assets & liabilities'],
-  ['sheet', 'Entry sheet'], ['history', 'All years'], ['settings', 'Settings'],
+// The numbered steps, in the order you work through a return. `portal` is where the figures go on etaxnbr.gov.bd.
+const STEPS = [
+  { id: 'checklist', group: 'Prepare', title: 'Gather documents', nav: 'Documents',
+    lead: 'Collect the certificates and statements you need. Mark anything that doesn\'t apply to you as N/A.' },
+  { id: 'monthly', group: 'Prepare', title: 'Salary income', nav: 'Salary income',
+    lead: 'Enter payslips as they arrive, totals so far, or the whole year at once. Then send the totals to Income & tax.' },
+  { id: 'income', group: 'Prepare', title: 'Income & tax', nav: 'Income & tax',
+    lead: 'Salary, other income such as bank interest, and the tax already deducted. This is what the return\'s tax is worked out from.',
+    portal: 'Income → Salaries, Financial Assets' },
+  { id: 'investments', group: 'Prepare', title: 'Investments (tax rebate)', nav: 'Rebate',
+    lead: 'Life insurance, DPS, provident fund and other investments made during the income year reduce your tax.',
+    portal: 'Rebate' },
+  { id: 'expenses', group: 'Prepare', title: 'Expenditure', nav: 'Expenditure',
+    lead: 'What you spent during the income year, in the same rows as the website.',
+    portal: 'Expenditure (IT-10BB)' },
+  { id: 'wealth', group: 'Prepare', title: 'Assets & liabilities', nav: 'Assets & liabilities',
+    lead: 'What you owned and owed at the end of the year. The difference must be 0 before the website lets you submit.',
+    portal: 'Assets & Liabilities (IT-10B)' },
+  { id: 'sheet', group: 'File', title: 'Enter on etaxnbr.gov.bd', nav: 'Enter on the website',
+    lead: 'Keep this beside the website and type each figure in, page by page. Tick rows off as you go.',
+    portal: 'Every page, in order' },
+  { id: 'file', group: 'File', title: 'Pay & submit', nav: 'Pay & submit',
+    lead: 'Pay what\'s left, submit the return, and share the acknowledgement slip.',
+    portal: 'Tax & Payment → Return View → Submit' },
 ];
+const STEP_OF = Object.fromEntries(STEPS.map((s, i) => [s.id, { ...s, n: i + 1 }]));
+const TABS = [['overview', 'Home'], ...STEPS.map(s => [s.id, s.nav]), ['history', 'All years'], ['settings', 'Settings']];
 // Asset categories in the order and wording of the website's Assets & Liabilities page
 const ASSET_SECTIONS = [
   ['Business capital', ['Business capital']],
@@ -424,7 +446,10 @@ function compute(s) {
     ew.push(['bad', `Outflow is ${fmt(-c.difference)} more than your sources. Expenses or closing assets may be too high, last year's net wealth too low, or income / receipts (gifts, loans) missing.`]);
   }
   c.expenseWarningsHtml = ew.map(([k, t]) => `<div class="${k}">${esc(t)}</div>`).join('');
-  if (!c.balanced) c.warnings.push(`The Assets & liabilities difference is ${fmt(c.difference)}; it must be 0. Balance it on the Assets & liabilities tab.`);
+  c.diffStatusHtml = c.balanced
+    ? '<div class="ok"><b>Balanced:</b> the difference is 0, so the website will accept these figures.</div>'
+    : `<div class="${c.difference > 0 ? 'warn' : 'bad'}"><b>Difference ${fmt(c.difference)}:</b> it must be 0 before you can submit. <a href="#" data-action="scroll" data-to="balanceSection" data-lock-safe="1">Balance it ↓</a></div>`;
+  if (!c.balanced) c.warnings.push(`The Assets & liabilities difference is ${fmt(c.difference)}; it must be 0. Use Balance it in step 6, Assets & liabilities.`);
 
   c.wealthChecks = wealthChecks(s, c);
   c.wealthChecksHtml = c.wealthChecks.length ? c.wealthChecks.map(w => `<div class="warn">${esc(w)}</div>`).join('') : '<div class="ok">No issues found.</div>';
@@ -587,13 +612,13 @@ function checklistDef(s) {
     { section: '3. File on etaxnbr.gov.bd', items: [
       i('web-login', `Log in and start the return for ${y.ayLabel}`),
       i('web-info', 'Confirm personal information; select income sources (salary, and any others)'),
-      i('web-salary', 'Enter salary details and tax deducted at source (Entry sheet tab), then the challan details from the TDS certificate'),
+      i('web-salary', 'Enter salary details and tax deducted at source (step 7 lists them), then the challan details from the TDS certificate'),
       i('web-other', 'Enter other income and its tax deducted'),
       i('web-invest', 'Rebate: enter investments'),
-      i('web-expenses', 'Expenditure: enter the amounts from the Entry sheet'),
+      i('web-expenses', 'Expenditure: enter the amounts from step 7'),
       i('web-assets', "Assets & Liabilities: enter assets, liabilities and previous year's net wealth; the Summary's Difference must show 0"),
       i('web-review', "Compare the site's tax figure with the estimate here; investigate any difference"),
-      i('web-pay', "Pay the site's Net Payable (Tax & Payment → Pay Now), then confirm it under Pay and submit (Overview or Entry sheet)"),
+      i('web-pay', "Pay the site's Net Payable (Tax & Payment → Pay Now), then confirm it in step 8, Pay & submit"),
       i('web-submit', 'Submit the return'),
       i('web-ack', 'Download the acknowledgement slip and return copy; save them in this folder'),
     ] },
@@ -660,7 +685,9 @@ async function loadYear(ay) {
 
 function renderYearSelect() {
   const all = Array.from(new Set([...years, state?.assessmentYear].filter(Boolean))).sort();
-  $('#yearSelect').innerHTML = all.map(y => `<option value="${y}" ${y === state?.assessmentYear ? 'selected' : ''}>${yearInfo(y).ayLabel} · income year ${yearInfo(y).iyLabel} · ${ROLE_LABEL[yearRole(y)].toLowerCase()}</option>`).join('');
+  const nx = state && nextAY(state.assessmentYear);
+  $('#yearSelect').innerHTML = all.map(y => `<option value="${y}" ${y === state?.assessmentYear ? 'selected' : ''}>${yearInfo(y).ayLabel} (income year ${yearInfo(y).iyLabel})</option>`).join('')
+    + (nx && !all.includes(nx) ? `<option value="__next">＋ Start ${yearInfo(nx).ayLabel}…</option>` : '');
   if (state) {
     const role = yearRole(state.assessmentYear);
     $('#yearRole').textContent = ROLE_LABEL[role] + (state.locked ? ' · locked' : '');
@@ -668,11 +695,11 @@ function renderYearSelect() {
     document.body.dataset.role = role;
     document.title = `${yearInfo(state.assessmentYear).ayLabel} (${ROLE_LABEL[role].toLowerCase()}) · Tax Return Helper`;
   }
-  $('#nextYearBtn').textContent = state ? `Start ${yearInfo(nextAY(state.assessmentYear)).ayLabel}` : 'Start next year';
 }
 
 function renderPersonSelect() {
-  $('#personSelect').innerHTML = people.map(p => `<option value="${esc(p.id)}" ${p.id === person ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
+  $('#personSelect').innerHTML = people.map(p => `<option value="${esc(p.id)}" ${p.id === person ? 'selected' : ''}>${esc(p.name)}</option>`).join('')
+    + '<option value="__add">＋ Add person…</option>';
 }
 function rememberPerson() { try { localStorage.setItem('person', person); } catch { /* per-browser convenience only */ } }
 
@@ -771,7 +798,7 @@ function table(listPath, cols, tpl, { addLabel = 'Add row', foot = null, cls = '
     return `<td>${inp(`${listPath}.${i}.${c.key}`, { type: c.type || 'text', ph: c.ph, cls: c.cls ? c.cls(row) : '', signed: c.signed })}</td>`;
   }).join('')}<td class="r"><button class="icon" data-action="del" data-list="${listPath}" data-idx="${i}" title="Remove row">✕</button></td></tr>`).join('');
   const footHtml = foot ? `<tfoot><tr>${foot.map(f => `<td class="${f.startsWith('<') ? 'r' : ''}">${f}</td>`).join('')}<td></td></tr></tfoot>` : '';
-  return `<table class="grid ${cls}"><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${cols.length + 1}" class="empty">Nothing added yet.</td></tr>`}</tbody>${footHtml}</table>
+  return `<div class="table-scroll"><table class="grid ${cls}"><thead><tr>${head}</tr></thead><tbody>${body || `<tr><td colspan="${cols.length + 1}" class="empty">Nothing added yet.</td></tr>`}</tbody>${footHtml}</table></div>
     <button class="add" data-action="add" data-list="${listPath}" data-tpl="${tpl}">+ ${addLabel}</button>`;
 }
 
@@ -802,7 +829,7 @@ function suggestBanks(s) {
 const ackDone = (s, c) => (c.grossSalary <= 0 || s.submission.ackEmployer.sent)
   && s.submission.ackBanks.length > 0 && s.submission.ackBanks.every(b => b.sent);
 
-// Pay the net payable, then submit: two confirmations, shown on the Overview, Entry sheet and Settings.
+// Pay the net payable, then submit: two confirmations, on the Pay & submit step.
 function filingPanelHtml(c) {
   const sub = state.submission; const due = Math.round(c.balance); const nextAy = yearInfo(nextAY(state.assessmentYear)).ayLabel;
   const step = (done, title, body) => `<div class="filing-step ${done ? 'done' : ''}"><div class="filing-head"><span class="filing-mark">${done ? '✓' : ''}</span><b>${title}</b></div>${body}</div>`;
@@ -846,7 +873,7 @@ function filingPanelHtml(c) {
   return `<section class="panel"><h3>Pay and submit</h3><div class="filing">${pay}${submit}${share.replace('class="filing-step', 'class="filing-step wide')}</div></section>`;
 }
 
-// Overview panel for a year that's partly entered: actual income so far against the projection.
+// Home panel for a year that's partly entered: actual income so far against the projection.
 function incomeSoFarHtml(mo) {
   if (!(mo.monthsReceived > 0 && mo.monthsReceived < 12)) return '';
   const pct = mo.totalAnnual > 0 ? Math.min(100, Math.round(mo.totalActual / mo.totalAnnual * 100)) : 0;
@@ -869,41 +896,49 @@ function incomeSoFarHtml(mo) {
 }
 
 views.overview = () => {
-  const y = yearInfo(state.assessmentYear);
+  const y = yearInfo(state.assessmentYear); const c = compute(state); const s = state;
+  const nx = nextStep(s, c); const nextLbl = yearInfo(nextAY(s.assessmentYear)).ayLabel;
+  const hero = nx
+    ? `<div class="next-card ${nx.state === 'warn' ? 'warn-card' : ''}"><div>
+        <div class="kicker">${nx.state === 'warn' ? 'Needs attention' : 'Next step'}</div>
+        <div class="title">${nx.n}. ${esc(nx.title)}</div><p>${esc(nx.detail)}</p></div>
+        <button data-action="tab" data-tab="${nx.id}">${nx.state === 'warn' ? 'Fix it' : 'Continue'} →</button></div>`
+    : `<div class="next-card"><div><div class="kicker">All done</div><div class="title">${y.ayLabel} is submitted</div>
+        <p>${s.submission.ackNo ? `Acknowledgement no. ${esc(s.submission.ackNo)}. ` : ''}Next year's opening values come from this one.</p></div>
+        <button data-action="start-next" data-lock-safe="1">${years.includes(nextAY(s.assessmentYear)) ? 'Open' : 'Start'} ${nextLbl} →</button></div>`;
+  const stepRows = STEPS.map(st => {
+    const ss = stepState(st.id, s, c);
+    return `<li class="st-${ss.state}"><button data-action="tab" data-tab="${st.id}">
+      <span class="nav-num">${ss.state === 'done' ? '✓' : ss.state === 'warn' ? '!' : STEP_OF[st.id].n}</span>
+      <span class="name">${esc(st.nav)}</span><span class="detail">${esc(ss.detail)}</span><span class="chev">›</span></button></li>`;
+  }).join('');
+  const due = Math.round(c.balance);
   return `
-  <h2>${y.ayLabel} <span class="muted">· income year ${y.startLabel} – ${y.endLabel}</span></h2>
-  <p class="muted">Returns are normally due by <b>${y.deadline}</b>. Tax figures here are an estimate to check against the site, which does the official calculation.</p>
+  <div class="page-head"><div class="eyebrow">Income year ${y.startLabel} – ${y.endLabel}</div>
+    <h1>Your ${y.ayLabel} return</h1>
+    <p class="lead">Returns are normally due by <b>${y.deadline}</b>; check for extensions. Figures here are estimates: the website does the official calculation.</p></div>
+  ${hero}
   <div class="cards">
-    <div class="card"><div class="label">Annual income</div><div class="value">${calc('mo_totalAnnual')}</div><div class="sub">${calc('mo_receivedLabel')}</div></div>
-    <div class="card"><div class="label">Gross salary</div><div class="value">${calc('grossSalary')}</div><div class="sub">Income & tax tab (goes on the return)</div></div>
-    <div class="card"><div class="label">Taxable income</div><div class="value">${calc('totalIncome')}</div><div class="sub">After the salary exemption</div></div>
-    <div class="card"><div class="label">Tax after rebate</div><div class="value">${calc('netTax')}</div><div class="sub">Estimate</div></div>
-    <div class="card"><div class="label">Tax already deducted / paid</div><div class="value">${calc('taxCredits')}</div><div class="sub">TDS and advance tax</div></div>
-    <div class="card"><div class="label">${calc('balanceLabel')}</div><div class="value">${calc('balanceAbs')}</div><div class="sub">Tax after rebate − tax paid</div></div>
-    <div class="card"><div class="label">Net wealth</div><div class="value">${calc('closingNW')}</div><div class="sub">On ${y.endLabel}</div></div>
-    <div class="card"><div class="label">Assets & liabilities difference</div><div class="value">${calc('difference')}</div><div class="sub">Must be 0 to submit</div></div>
+    <div class="card"><div class="label">Tax payable</div><div class="value">${calc('netTax')}</div><div class="sub">After rebate · estimate</div></div>
+    <div class="card"><div class="label">Already paid</div><div class="value">${calc('taxCredits')}</div><div class="sub">Tax deducted and advance tax</div></div>
+    <div class="card ${due > 0 ? 'attn' : 'good'}"><div class="label">${calc('balanceLabel')}</div><div class="value">${calc('balanceAbs')}</div><div class="sub">${due > 0 ? 'Pay before you submit' : 'Nothing more to pay'}</div></div>
+    <div class="card ${c.balanced ? 'good' : 'attn'}"><div class="label">Assets &amp; liabilities difference</div><div class="value">${calc('difference')}</div><div class="sub">${c.balanced ? 'Balanced' : 'Must be 0 to submit'}</div></div>
   </div>
-  ${incomeSoFarHtml(compute(state).mo)}
-  ${filingPanelHtml(compute(state))}
-  <p class="muted">Stuck on the website? Most tabs have a <b>Tips</b> section for the snags people commonly hit, and the Entry sheet has a list of fixes.</p>
   <section class="panel">
-    <h3>Checklist</h3>
-    <div class="progress"><div id="progBar" style="width:0%"></div></div>
-    <p class="muted">${calc('checkLabel')} · <a href="#" data-action="tab" data-tab="checklist">Open checklist</a></p>
+    <div class="panel-head"><h3>Your return, step by step</h3><span class="muted">${STEPS.filter(st => stepState(st.id, s, c).state === 'done').length} of ${STEPS.length} done</span></div>
+    <ol class="step-list">${stepRows}</ol>
   </section>
-  <section class="panel"><h3>Things to check</h3><div data-calc-html="warningsHtml"></div></section>
-  <section class="panel">
-    <h3>Suggested order</h3>
-    <ol>
-      <li>Work through <b>Checklist → Gather documents</b>.</li>
-      <li><b>Salary income</b>: enter each payslip through the year, or the whole year at once; then send the totals to Income & tax.</li>
-      <li><b>Income & tax</b>: check the totals against your salary certificate and TDS certificate.</li>
-      <li><b>Rebate</b>: life insurance, DPS, PF and anything else eligible for the rebate.</li>
-      <li><b>Expenditure</b>: what you actually spent (enter or import from your tracker).</li>
-      <li><b>Assets & liabilities</b>: values on ${y.endLabel}, then use <b>Balance it</b> until the difference is 0.</li>
-      <li><b>Entry sheet</b>: keep it open beside etaxnbr.gov.bd and tick off each field as you type it in.</li>
-    </ol>
-  </section>`;
+  ${incomeSoFarHtml(c.mo)}
+  <div class="grid-2">
+    <section class="panel"><h3>At a glance</h3>
+      <dl class="sum">
+        <dt>Gross salary</dt><dd>${calc('grossSalary')}</dd>
+        <dt>Taxable income</dt><dd>${calc('totalIncome')}</dd>
+        <dt>Investment rebate</dt><dd>${calc('rebate')}</dd>
+        <dt>Net wealth on ${y.endLabel}</dt><dd>${calc('closingNW')}</dd>
+      </dl></section>
+    <section class="panel"><h3>Things to check</h3><div data-calc-html="warningsHtml"></div></section>
+  </div>`;
 };
 
 let selMonth = null; // transient: month open in the monthly editor
@@ -961,7 +996,7 @@ views.monthly = () => {
   const lastM = last >= 0 ? m.months[last] : null;
   const statusText = { carry: 'in the totals', actual: 'received', planned: 'planned', projected: 'projected' };
 
-  const modeBtn = (id, label) => `<button class="${mode === id ? '' : 'secondary'}" data-action="mo-mode" data-mode="${id}">${label}</button>`;
+  const modeBtn = (id, label) => `<button class="${mode === id ? 'on' : ''}" data-action="mo-mode" data-mode="${id}">${label}</button>`;
   const throughSel = `<label class="field" style="max-width:320px"><span>My totals cover</span><select id="ytdThrough">${L.slice(0, 11).map((l, k) => `<option value="${k}" ${through === k ? 'selected' : ''}>July – ${l.long}</option>`).join('')}</select></label>`;
   const modeHelp = {
     monthly: 'Enter each payslip as it arrives. Recurring items (basic, allowances) are projected forward at the latest month\'s amount, so you can see your tax position at any point in the year.',
@@ -1030,11 +1065,10 @@ views.monthly = () => {
     <td style="text-align:center"><input type="checkbox" data-bind="monthly.components.${k}.recurring" data-type="bool" ${c.recurring ? 'checked' : ''}></td>
     <td class="r"><button class="icon" data-action="del" data-list="monthly.components" data-idx="${k}">✕</button></td></tr>`).join('');
 
-  return `<h2>Salary income</h2>
-  <section class="panel">
+  return `<section class="panel">
     <h3>How do you want to enter your income?</h3>
-    <p>${modeBtn('monthly', 'Month by month')} ${modeBtn('ytd', 'Totals so far, then monthly')} ${modeBtn('year', 'Whole year at once')}</p>
-    <p class="muted" style="margin-bottom:0">${modeHelp} You can switch at any time.</p>
+    <div class="seg">${modeBtn('monthly', 'Month by month')}${modeBtn('ytd', 'Totals so far, then monthly')}${modeBtn('year', 'Whole year at once')}</div>
+    <p class="muted" style="margin:10px 0 0">${modeHelp} You can switch at any time.</p>
   </section>
   ${mode !== 'monthly' ? `<section class="panel">
     <h3>${mode === 'year' ? `Totals for ${y.startLabel} – ${y.endLabel}` : 'Totals so far'}</h3>
@@ -1069,8 +1103,8 @@ views.monthly = () => {
     </dl>
     <table class="grid" style="margin:12px 0"><thead><tr><th class="r">Slab</th><th class="r">Rate</th><th class="r">Income in slab</th><th class="r">Tax</th><th class="r">Remaining</th></tr></thead>
       <tbody>${slabRows}</tbody><tfoot><tr><td>Total tax</td><td></td><td></td><td class="r">${calc('mo_grossTax')}</td><td></td></tr></tfoot></table>
-    ${field('Eligible investment for the year (Tk)', inp('monthly.investmentOverride', { type: 'optnum', ph: `${fmt(compute(s).eligibleInvestment)} from the Rebate tab` }),
-      'Leave blank to use the Rebate tab, or type what you plan to invest by 30 June.')}
+    ${field('Eligible investment for the year (Tk)', inp('monthly.investmentOverride', { type: 'optnum', ph: `${fmt(compute(s).eligibleInvestment)} from the Rebate step` }),
+      'Leave blank to use the Rebate step, or type what you plan to invest by 30 June.')}
     <dl class="sum">
       <dt>${s.rules.rebatePctIncome}% rebate cap</dt><dd>${calc('mo_rebateByIncome')}</dd>
       <dt>Investment needed for the full rebate</dt><dd>${calc('mo_investmentForMaxRebate')}</dd>
@@ -1198,7 +1232,7 @@ async function importTaxCard(file) {
   }
 }
 
-// Fill the card's month on the Salary income tab. Returns false if nothing was changed.
+// Fill the card's month in Salary income. Returns false if nothing was changed.
 function applyTaxCard(card, fileName) {
   const s = state, m = s.monthly, L = monthLabels(s.assessmentYear), i = card.monthIdx;
   if (card.ay !== s.assessmentYear) {
@@ -1210,7 +1244,7 @@ function applyTaxCard(card, fileName) {
   const myTin = s.profile.tin.replace(/\D/g, '');
   if (card.tin && myTin && card.tin !== myTin && !confirm(`This tax card is for ${card.employee} (TIN ${card.tin}), not ${personName()} (TIN ${s.profile.tin}). Import it anyway?`)) return false;
   if (i <= num(m.carryIn.through)) {
-    alert(`${L[i].long} is included in your totals on this tab ("My totals cover"). Choose "Month by month", or make the totals end before ${L[i].long}, then import the card again.`);
+    alert(`${L[i].long} is included in your totals on Salary income ("My totals cover"). Choose "Month by month", or make the totals end before ${L[i].long}, then import the card again.`);
     return false;
   }
   const mm = m.months[i];
@@ -1250,7 +1284,7 @@ function applyTaxCard(card, fileName) {
   if (card.rebatePctInvestment !== null && card.rebatePctInvestment !== num(r.rebatePctInvestment)) ruleDiffs.push(`rebate ${card.rebatePctInvestment}% of investment (here ${num(r.rebatePctInvestment)}%)`);
   if (card.rebatePctIncome !== null && card.rebatePctIncome !== num(r.rebatePctIncome)) ruleDiffs.push(`rebate cap ${card.rebatePctIncome}% of income (here ${num(r.rebatePctIncome)}%)`);
   if (card.rebateCap && card.rebateCap !== num(r.rebateCap)) ruleDiffs.push(`rebate limit ${fmt(card.rebateCap)} (here ${fmt(num(r.rebateCap))})`);
-  if (Math.round(card.projectedAnnual) !== Math.round(mo.totalAnnual)) notes.push(`Your employer projects ${fmt(card.projectedAnnual)} for the year; this tab projects ${fmt(mo.totalAnnual)}. The difference is usually bonuses: plan them on the months you expect them.`);
+  if (Math.round(card.projectedAnnual) !== Math.round(mo.totalAnnual)) notes.push(`Your employer projects ${fmt(card.projectedAnnual)} for the year; Salary income projects ${fmt(mo.totalAnnual)}. The difference is usually bonuses: plan them on the months you expect them.`);
   if (card.earlyFiling) notes.push(`The card counts ${fmt(card.earlyFiling)} of "tax reduction for early return filing" as tax already paid. It isn't deducted from your salary, so it isn't entered here.`);
   cardResult = { fileName, month: L[i].long, filled, added, tdsRegular: card.tdsRegular, tdsOneTime: card.tdsOneTime, notes, ruleDiffs,
     card: { taxable: card.taxable, grossTax: card.grossTax, taxPayable: card.taxPayable, investment: card.investment }, rules: { thr, bands, ...card } };
@@ -1308,8 +1342,7 @@ views.checklist = () => {
   const item = (id, text) => `<div class="check-item ${cls(id)}">${box(id)}<label for="ck-${id}">${esc(text)}${na[id] ? ' <span class="na-tag">Not applicable</span>' : ''}</label>${naBtn(id)}</div>`;
   const secs = checklistDef(state).map(sec => `<section class="panel"><h3>${sec.section}</h3>${sec.items.map(i => item(i.id, i.text)).join('')}</section>`).join('');
   const custom = state.checklist.custom.map((c, i) => `<div class="check-item ${cls(c.id)}">${box(c.id)}${inp(`checklist.custom.${i}.text`, { ph: 'Your own item' })}${naBtn(c.id)}<button class="icon" data-action="del" data-list="checklist.custom" data-idx="${i}">✕</button></div>`).join('');
-  return `<h2>Checklist</h2>
-    <div class="progress"><div id="progBar" style="width:0%"></div></div><p class="muted">${calc('checkLabel')}</p>
+  return `<div class="progress"><div id="progBar" style="width:0%"></div></div><p class="muted">${calc('checkLabel')}</p>
     <p class="muted">Mark anything that doesn't apply to you as <b>N/A</b>: it's left out of the progress, so the checklist can reach 100%.</p>
     ${secs}
     <section class="panel"><h3>My items</h3><p class="muted">Custom items carry over to next year (unticked).</p>${custom}
@@ -1318,11 +1351,10 @@ views.checklist = () => {
 
 views.income = () => {
   const y = yearInfo(state.assessmentYear);
-  return `<h2>Income & tax</h2>
-  <section class="panel">
+  return `  <section class="panel">
     <h3>Salary (${y.startLabel} – ${y.endLabel})</h3>
-    <div class="help"><p>Copy each line from your employer's salary certificate, using <b>full-year gross amounts</b> before tax. Use the same component names the website shows, so the Entry sheet matches the site.</p>
-    <p>If your employer pays into a recognised provident fund, their contribution counts as income here and as an investment on the Rebate tab.</p></div>
+    <div class="help"><p>Copy each line from your employer's salary certificate, using <b>full-year gross amounts</b> before tax. Use the same component names the website shows, so step 7 matches the site.</p>
+    <p>If your employer pays into a recognised provident fund, their contribution counts as income here and as an investment in the Rebate step.</p></div>
     ${field('Employer', inp('salary.employer', { ph: 'Company name' }))}
     ${table('salary.components', [{ label: 'Component', key: 'name' }, { label: 'Amount (Tk)', key: 'amount', type: 'num' }], 'comp',
       { addLabel: 'Add component', foot: ['Gross salary', calc('grossSalary')] })}
@@ -1369,7 +1401,7 @@ views.income = () => {
     </dl>
     <p class="muted">If tax after rebate is under the minimum tax (Tk ${fmt(state.rules.minTax)}) and income is above the threshold, the minimum applies.</p>
     ${tips([
-      "If the site's tax differs, compare its <b>Tax Computation</b> line by line: Gross tax (then check the tax-free amount and slabs in Settings), Rebate (check the rebate rate on the Rebate tab), and Total Payment &amp; Adjustments (your TDS).",
+      "If the site's tax differs, compare its <b>Tax Computation</b> line by line: Gross tax (then check the tax-free amount and slabs in Settings), Rebate (check the rebate rate in the Rebate step), and Total Payment &amp; Adjustments (your TDS).",
       'The site\'s figures are the official ones: pay its <b>Net Payable</b>. Adjust the rules here so next year\'s estimate starts closer.',
     ], 'Tips: if the site shows a different tax')}
   </section>`;
@@ -1377,8 +1409,7 @@ views.income = () => {
 
 views.investments = () => {
   const r = state.rules; const y = yearInfo(state.assessmentYear);
-  return `<h2>Investments (tax rebate)</h2>
-  <div class="help">
+  return `  <div class="help">
     <p><b>Only money you put in during the income year counts</b> (${y.startLabel} – ${y.endLabel}). The rebate is the lowest of: ${r.rebatePctIncome}% of taxable income, ${r.rebatePctInvestment}% of eligible investment, or Tk ${fmt(r.rebateCap)}.</p>
     <p>You'd need about ${calc('investmentForMaxRebate')} Tk of eligible investment to get the full rebate this year.</p>
   </div>
@@ -1390,12 +1421,12 @@ views.investments = () => {
         <li><b>Premium paid</b> = only the premiums you actually paid between ${y.startLabel} and ${y.endLabel}. Count every instalment (monthly, quarterly or annual) paid in that period. MetLife can issue a premium payment certificate for a date range.</li>
         <li>Premiums you pay on your <b>spouse's or minor child's</b> policy also count. If that policy is listed as an asset on their own return, set <b>Asset listed on</b> to "Their return" so it isn't expected among your assets.</li>
         <li>Allowable for the rebate = the lower of the premium paid or ${r.insurancePctOfSumAssured}% of the sum assured.</li>
-        <li>On the Assets tab you can also show the policy as a financial asset (total premiums paid to date). See the note there.</li>
+        <li>In Assets &amp; liabilities you can also show the policy as a financial asset (total premiums paid to date). See the note there.</li>
       </ul>
     </div>
     ${tips([
       "The insurer's app and a certificate can show different face amounts (e.g. one includes riders). Use the <b>basic sum assured</b> on the policy schedule. It only sets the 10% cap, so it rarely changes the rebate.",
-      "The asset value (Assets tab) is the total premiums paid to date, or the value on the insurer's certificate. It isn't the sum assured, and it isn't only this year's premium.",
+      "The asset value (Assets &amp; liabilities) is the total premiums paid to date, or the value on the insurer's certificate. It isn't the sum assured, and it isn't only this year's premium.",
       "A policy for your spouse, e.g. given as Mahr: the premiums can count for your rebate, the policy is an asset on <b>their</b> return, and the premiums you paid go under <b>Gift, donation and contribution</b> on the Expenditure tab.",
     ])}
     ${table('investments.insurance', [
@@ -1411,7 +1442,7 @@ views.investments = () => {
     <p class="muted">Instalments you deposited during the year (not the balance). Allowable up to Tk ${fmt(r.dpsCap)} a year in total.</p>
     ${tips([
       "A DPS that matured or closed during the year still counts for the instalments you paid before it closed. The bank's certificate lists them.",
-      "After it closes, its balance is 0 on the Assets tab (the payout is now in your bank account), and its profit goes under Other income on Income &amp; tax.",
+      "After it closes, its balance is 0 in Assets &amp; liabilities (the payout is now in your bank account), and its profit goes under Other income on Income &amp; tax.",
     ])}
     ${table('investments.dps', [{ label: 'Bank', key: 'bank' }, { label: 'Account no.', key: 'account' }, { label: 'Deposited this year', key: 'deposited', type: 'num' }], 'dps',
       { addLabel: 'Add DPS', foot: ['Allowable', '', calc('invDps')] })}
@@ -1525,7 +1556,7 @@ function balancePreview() {
   if (W && a) parts.push(`<b>${esc(a.category)}${a.description ? ` – ${esc(a.description)}` : ''}</b> closing ${W > 0 ? 'goes up' : 'goes down'} by <b>${fmt(Math.abs(W))}</b>, to ${fmt(num(a.closing) + W)}${a.category === 'Cash in hand' ? ` (it was ${fmt(num(a.opening))} on last year's return)` : ''}.`);
   if (W && !a) parts.push(`<span class="bad">Add an asset row to put ${fmt(W)} into net wealth.</span>`);
   let warn = '';
-  if (c.trackedTotal === 0) warn = '<div class="warn">You haven\'t entered any expenses yet. Enter what you spent on the Expenditure tab first, so only the real gap is left to balance.</div>';
+  if (c.trackedTotal === 0) warn = '<div class="warn">You haven\'t entered any expenses yet. Enter what you spent in the Expenditure step first, so only the real gap is left to balance.</div>';
   else if (pct !== null && Math.abs(pct) > 15) warn = `<div class="warn">That's a ${Math.abs(pct).toFixed(0)}% change to your expenses. Check the asset list below for something missing first.</div>`;
   if (a && num(a.closing) + W < 0) warn += `<div class="bad">That would make ${esc(a.category)} negative.</div>`;
   if (a && W && a.category === 'Cash in hand') {
@@ -1544,7 +1575,7 @@ function applyBalance() {
   if (!confirm(`Apply this?\n\n${p.html.replace(/<br>/g, '\n').replace(/<[^>]+>/g, '')}`)) return false;
   if (p.E) {
     const spread = expenseSpread(p.E);
-    if (!spread) { alert('All expense categories are locked. Unlock one on the Expenditure tab.'); return false; }
+    if (!spread) { alert('All expense categories are locked. Unlock one in the Expenditure step.'); return false; }
     for (const x of state.expenses.categories) if (spread[x.id]) x.adj = num(x.adj) + spread[x.id];
   }
   if (p.W && p.a) {
@@ -1617,15 +1648,14 @@ views.expenses = () => {
   const extras = cats.filter(x => !EXPENSE_GROUP_OF.hasOwnProperty(x.id));
   const extraRows = extras.length ? `<tr class="grp"><td colspan="${last ? 6 : 5}">Your own categories <span class="muted">(not on the website: move these amounts into a website row)</span></td></tr>`
     + extras.map(x => leaf(x, true).replace('</td>', ` <button class="icon" data-action="del" data-list="expenses.categories" data-idx="${idx[x.id]}" title="Remove row">✕</button></td>`)).join('') : '';
-  return `<h2>Expenditure</h2>
-  <div class="help">
+  return `  <div class="help">
     <p>Enter what you <b>actually spent</b> from ${y.startLabel} to ${y.endLabel}. The rows match the website's Expenditure page. Don't force it to balance here: like the website, the balance check happens on <b>Assets & liabilities</b>, and <b>Balance it</b> there splits any gap between expenses and net wealth.</p>
   </div>
   <section class="panel">
     <h3>Expenses</h3>
     ${last ? `<p class="muted">The <b>${yearInfo(prevDoc.assessmentYear).ayLabel.replace('AY ', '')}</b> column shows last year's figures as filed, for comparison.</p>` : ''}
     <p class="muted"><b>Your amount</b> = what your records show. <b>Lock</b> = keep it as-is when balancing (e.g. rent or school fees you know exactly). <b>Balancing</b> = added by Balance it. <b>To enter</b> = the figure for the website. Section totals are calculated by the website.</p>
-    <table class="grid expenditure">
+    <div class="table-scroll"><table class="grid expenditure">
       <thead><tr><th>Particulars</th>${last ? `<th class="r w-last">${yearInfo(prevDoc.assessmentYear).ayLabel.replace('AY ', '')}</th>` : ''}<th class="r w-amt">Your amount</th><th class="w-lock">Lock</th><th class="r w-bal">Balancing</th><th class="r w-fin">To enter</th></tr></thead>
       <tbody>${body}${extraRows}
         <tr class="total-row"><td>Total expense relating to lifestyle</td>${L(last && last.lifestyle)}<td class="r">${calc('trackedTotal')}</td><td></td><td class="r">${calc('adjTotal')}</td><td class="r">${calc('finalLifestyle')}</td></tr>
@@ -1636,7 +1666,7 @@ views.expenses = () => {
         <tr><td>Environmental surcharge</td>${L(last && last.envSurcharge)}<td>${inp('expenses.envSurcharge', { type: 'num' })}</td><td></td><td></td><td class="r"><b>${calc('envSurcharge')}</b></td></tr>
       </tbody>
       <tfoot><tr><td>Total amount of expense and tax</td>${L(last && last.finalTotal)}<td></td><td></td><td></td><td class="r">${calc('finalTotal')}</td></tr></tfoot>
-    </table>
+    </table></div>
     <p><button class="secondary" data-action="reset-adj">Remove balancing adjustments</button></p>
     <p class="muted">The total carries over to the Assets & Liabilities page as "Annual Living Expense".</p>
   </section>
@@ -1645,7 +1675,7 @@ views.expenses = () => {
     ${field(`Tax paid between ${y.startLabel} and ${y.endLabel} for earlier years (Tk)`, inp('prevYearTaxPaid', { type: 'num' }),
       "E.g. the balance you paid when filing last year's return. Filled in automatically when a year is created with 'Start next year'.")}
     ${tips([
-      'The site splits <b>Tax, charges, etc. paid</b> into two boxes: <b>Tax at source and advance tax</b>, and <b>Tax, surcharge or other amount</b>. The Entry sheet lists both.',
+      'The site splits <b>Tax, charges, etc. paid</b> into two boxes: <b>Tax at source and advance tax</b>, and <b>Tax, surcharge or other amount</b>. Step 7 lists both.',
       'Use the challan amount for earlier years\' tax (last year\'s return lists it under "Tax Paid with Return"). A card or processing fee isn\'t tax: put it under <b>Any other expenses</b>.',
       "Don't include this year's own net payable here. It's paid after the year ends, so it counts in next year's return.",
     ])}
@@ -1668,7 +1698,7 @@ views.expenses = () => {
     ${tips([
       'On the site these two boxes are on the <b>Assets &amp; Liabilities</b> page, under Other fund outflow, not on Expenditure.',
       '<b>Gift, donation and contribution</b> = money or property you gave away: a gift to a relative, Mahr, or premiums on someone else\'s policy. Zakat and charity already in the Philanthropy row shouldn\'t be counted again here.',
-      'Gifts you <b>received</b> go under Other receipts on the Assets &amp; liabilities tab, as a source of fund.',
+      'Gifts you <b>received</b> go under Other receipts in Assets &amp; liabilities, as a source of fund.',
     ])}
   </section>
   <section class="panel">
@@ -1683,7 +1713,7 @@ views.expenses = () => {
 views.wealth = () => {
   const y = yearInfo(state.assessmentYear);
   const c = compute(state);
-  return `<h2>Assets & liabilities</h2>
+  return `<div data-calc-html="diffStatusHtml"></div>
   <div class="help">
     <p><b>Opening</b> = value on ${y.prevEndLabel}. <b>Closing</b> = value on ${y.endLabel}. For each row, type <b>either the closing value or the change</b>; the other is calculated and shown in grey. The website asks for closing values.</p>
     <p>Use <b>cost</b> (what you paid), not market value. Categories follow the website's sections. Life insurance goes under <b>Other financial assets</b>, at total premiums paid to date. <b>Qty</b> and <b>Acquired</b> are what the website asks for gold, furniture and similar items.</p>
@@ -1695,7 +1725,6 @@ views.wealth = () => {
     "<b>Cash in hand</b> is the usual cause of a gap that won't close. Last year's figure is fixed, so check this year's against your records (cash taken out minus cash spent).",
     'If the Difference is 0 here but not on the site, compare Income shown, Tax exempted income, Annual living expense and Other fund outflow with the Summary below, one at a time.',
   ])}
-  <section class="panel"><details><summary>Where last year's paper return lines go</summary><div style="margin-top:10px">${paperMappingHtml()}</div></details></section>
   <section class="panel">
     <h3>Assets</h3>
     ${table('assets', [
@@ -1727,10 +1756,6 @@ views.wealth = () => {
       "Use the figure from last year's return (the site can import it). Leave blank to use your opening column.")}
   </section>
   <section class="panel">
-    <h3>Checks</h3>
-    <div data-calc-html="wealthChecksHtml"></div>
-  </section>
-  <section class="panel">
     <h3>Summary <span class="muted">(same as the website)</span></h3>
     <dl class="sum">
       <dt>Gross wealth</dt><dd>${calc('assetsClose')}</dd>
@@ -1744,23 +1769,34 @@ views.wealth = () => {
       <dt class="total">Difference (must be 0)</dt><dd class="total ${c.balanced ? '' : 'diff-bad'}">${calc('difference')}</dd>
     </dl>
   </section>
-  <section class="panel">
+  <section class="panel" id="balanceSection">
     <h3>Balance it</h3>
     <div id="balancePanel">${balancePanelHtml(c)}</div>
-  </section>`;
+  </section>
+  <section class="panel">
+    <h3>Checks</h3>
+    <div data-calc-html="wealthChecksHtml"></div>
+  </section>
+  <section class="panel"><details><summary>Where last year's paper return lines go</summary><div style="margin-top:10px">${paperMappingHtml()}</div></details></section>`;
 };
 
-views.sheet = () => {
-  const c = compute(state); const s = state; const y = yearInfo(s.assessmentYear);
+// The Entry sheet's rows, grouped in the website's order: [{title, where, rows: [[key, label, value]]}].
+function sheetGroups(s, c) {
+  const y = yearInfo(s.assessmentYear);
   const groups = [];
-  const g = (title, rows) => rows.length && groups.push({ title, rows });
+  let where = '';
+  const g = (title, rows) => rows.length && groups.push({ title, where, rows });
+  where = 'Income › Salaries';
   g('Salary', [
     ...s.salary.components.filter(x => num(x.amount)).map(x => [`sal-${x.id}`, x.name, x.amount]),
     ['sal-total', 'Total gross salary (check)', c.grossSalary],
     ['sal-tds', 'Tax deducted at source on salary', c.salaryTds],
   ]);
+  where = 'Income › Financial Assets';
   g('Other income', s.otherIncome.flatMap(x => [[`oi-${x.id}`, `${x.type}: ${x.source} (gross)`, x.gross], [`oit-${x.id}`, `${x.type}: ${x.source} (tax deducted)`, x.tds]]));
+  where = 'Tax & Payment';
   g('Advance tax', s.advanceTax.map(x => [`ait-${x.id}`, x.desc, x.amount]));
+  where = 'Rebate';
   g('Rebate (investments)', [
     ...s.investments.insurance.flatMap(p => [
       [`insv-${p.id}`, `${p.company} ${p.policyNo}: policy value (sum assured)`, p.sumAssured],
@@ -1773,6 +1809,7 @@ views.sheet = () => {
     ...s.investments.other.map(x => [`io-${x.id}`, x.desc, x.amount]),
     ['inv-rebate', 'Expected rebate (check)', c.rebate],
   ]);
+  where = 'Expenditure';
   g('Expenditure', [
     ...s.expenses.categories.filter(x => c[`expFinal_${x.id}`])
       .map(x => [`ex-${x.id}`, `${EXPENSE_GROUP_OF[x.id] ? `${EXPENSE_GROUP_OF[x.id]} › ` : ''}${x.name}`, c[`expFinal_${x.id}`]]),
@@ -1790,6 +1827,7 @@ views.sheet = () => {
     }
   }
   s.assets.filter(x => !ASSET_SECTION_OF[x.category] && num(x.closing)).forEach(a => assetRows.push([`as-${a.id}`, `${a.category}${a.description ? ` – ${a.description}` : ''}`, a.closing]));
+  where = 'Assets & Liabilities';
   g(`Assets on ${y.endLabel}`, assetRows);
   g(`Liabilities on ${y.endLabel}`, s.liabilities.filter(a => num(a.closing)).map(a => [`li-${a.id}`, `${a.category}${a.description ? ` – ${a.description}` : ''}`, a.closing]));
   g('Other outflow', [
@@ -1807,33 +1845,163 @@ views.sheet = () => {
     ['sm-gross', 'Gross wealth', c.assetsClose], ['sm-net', 'Net wealth', c.closingNW], ['sm-change', 'Change in net wealth', c.nwChange],
     ['sm-outflow', 'Total fund outflow', c.totalFundOutflow], ['sm-source', 'Source of fund', c.sourceOfFund], ['sm-diff', 'Difference', c.difference],
   ]);
+  where = 'Tax & Payment';
   g('Tax (check against the site)', [
     ['tx-income', 'Taxable income', c.totalIncome], ['tx-gross', 'Tax on income', c.grossTax],
     ['tx-rebate', 'Rebate', c.rebate], ['tx-net', 'Tax payable', c.netTax], ['tx-bal', c.balanceLabel, c.balanceAbs],
   ]);
-  const body = groups.map(gr => `<section class="panel"><h3>${esc(gr.title)}</h3><table class="grid">${gr.rows.map(([key, label, value]) => {
-    const done = !!s.entered[key]; const v = Math.round(num(value));
-    return `<tr class="sheet-row ${done ? 'entered' : ''} ${key === 'sm-diff' && v !== 0 ? 'diff-row' : ''}"><td><input type="checkbox" data-bind="entered.${key}" data-type="bool" data-rerender="1" ${done ? 'checked' : ''}></td>
-      <td>${esc(label)}</td><td class="sheet-value">${fmt(v)}</td><td class="r"><button class="copy" data-action="copy" data-value="${v}">Copy</button></td></tr>`;
-  }).join('')}</table></section>`).join('');
+  return groups;
+}
+const sheetProgress = (s, c) => {
+  const keys = sheetGroups(s, c).flatMap(gr => gr.rows.map(([k]) => k));
+  return { total: keys.length, done: keys.filter(k => s.entered[k]).length };
+};
+let hideEntered = false; // transient: Entry sheet shows only the rows still to type in
+
+views.sheet = () => {
+  const c = compute(state); const s = state;
+  const groups = sheetGroups(s, c);
+  const pr = sheetProgress(s, c);
+  const body = groups.map(gr => {
+    const rows = gr.rows.filter(([key]) => !(hideEntered && s.entered[key]));
+    if (!rows.length) return '';
+    return `<section class="panel"><div class="panel-head"><h3>${esc(gr.title)}</h3>${gr.where ? `<span class="portal">On the website: <b>${esc(gr.where)}</b></span>` : ''}</div><table class="grid">${rows.map(([key, label, value]) => {
+      const done = !!s.entered[key]; const v = Math.round(num(value));
+      return `<tr class="sheet-row ${done ? 'entered' : ''} ${key === 'sm-diff' && v !== 0 ? 'diff-row' : ''}"><td><input type="checkbox" data-bind="entered.${key}" data-type="bool" data-rerender="1" ${done ? 'checked' : ''}></td>
+        <td>${esc(label)}</td><td class="sheet-value">${fmt(v)}</td><td class="r"><button class="copy" data-action="copy" data-value="${v}">Copy</button></td></tr>`;
+    }).join('')}</table></section>`;
+  }).join('');
   const diffWarn = c.balanced ? '' : `<div class="bad"><b>The Assets &amp; liabilities difference is ${fmt(c.difference)}; it must be 0.</b>
       The website won't accept the return until it is, and the expense and asset figures below will change when you balance it.
-      Use <a href="#" data-action="tab" data-tab="wealth">Balance it on Assets &amp; liabilities</a> before entering these figures.</div>`;
-  return `<h2>Entry sheet</h2>
-    ${diffWarn}
-    <div class="help"><p>Keep this beside etaxnbr.gov.bd. <b>Copy</b> puts the plain number (no commas) on your clipboard. Tick each row once it's on the site. Rows marked "(check)" are for comparing with the site's own totals.</p></div>
+      <a href="#" data-action="tab" data-tab="wealth">Balance it on Assets &amp; liabilities</a> before entering these figures.</div>`;
+  const allDone = pr.total > 0 && pr.done === pr.total;
+  return `${diffWarn}
+    <div class="help"><p><b>Copy</b> puts the plain number (no commas) on your clipboard. Tick each row once it's on the site. Rows marked "(check)" are the site's own totals: compare, don't type.</p></div>
+    <div class="sheet-toolbar">
+      <span><b>${pr.done}</b> of ${pr.total} entered</span>
+      <div class="progress"><div style="width:${pr.total ? Math.round(pr.done / pr.total * 100) : 0}%"></div></div>
+      <button class="secondary" data-action="toggle-entered" data-lock-safe="1">${hideEntered ? 'Show all rows' : 'Hide entered rows'}</button>
+      <button class="secondary" data-action="clear-entered">Untick all</button>
+      <button class="secondary" data-action="print">Print</button>
+    </div>
+    ${hideEntered && allDone ? '<div class="ok">Everything is entered. Next: pay and submit.</div>' : ''}
+    ${body}
     ${tips([
-      "<b>The site's figure differs from a (check) row.</b> Find the first line that differs and look at the Tips on that tab. The site does the official calculation: if its tax rules differ (e.g. the rebate rate), set them on the Rebate tab or in Settings so the estimate matches.",
+      "<b>The site's figure differs from a (check) row.</b> Find the first line that differs and look at the Tips on that step. The site does the official calculation: if its tax rules differ (e.g. the rebate rate), set them on the Rebate tab or in Settings so the estimate matches.",
       '<b>"Income shown in the return" is lower on the site.</b> Other income (bank interest, DPS profit) is probably missing: tick <b>Financial Assets</b> as an income source on the site\'s Assessment page, then fill in its Income tab.',
       '<b>The Difference is 0 here but not on the site.</b> Compare Income shown, Tax exempted income, Annual living expense and Net wealth one at a time with the Summary rows below. Usually one field on the site wasn\'t updated after a change here.',
       '<b>A challan number gets cut off.</b> TDS challans are the year plus 11 digits (e.g. 2425-00012345671). If the box drops the last digit, type it without the hyphen.',
       "<b>Changes in the app don't show up.</b> Reload with Cmd+Shift+R. If it runs in Docker, app updates need <code>docker compose up -d --build</code> first.",
       '<b>Figures went back to old values.</b> Keep only one tab of this app open: an old tab can save its stale copy over newer changes. Backups (one a minute, last 30) are in <code>data/people/&lt;person&gt;/backups/</code>.',
-    ], 'Troubleshooting')}
-    <p><button class="secondary" data-action="clear-entered">Untick all</button> <button class="secondary" data-action="print">Print</button></p>
-    ${body}
-    ${filingPanelHtml(c)}`;
+    ], 'Troubleshooting')}`;
 };
+
+// Step 8: the website's last pages, then the confirmations kept here.
+views.file = () => {
+  const c = compute(state); const y = yearInfo(state.assessmentYear); const due = Math.round(c.balance);
+  return `<section class="panel">
+    <h3>On the website</h3>
+    <ol class="walk">
+      <li><b class="where">Tax &amp; Payment: check the tax</b>
+        <p>Compare the site's figures with this estimate. If they differ, the site is right: see the tips under Income &amp; tax.</p>
+        <dl class="sum">
+          <dt>Tax payable (after rebate)</dt><dd>${calc('netTax')}</dd>
+          <dt>Tax deducted at source and advance tax</dt><dd>${calc('taxCredits')}</dd>
+          <dt class="total">${calc('balanceLabel')}</dt><dd class="total">${calc('balanceAbs')}</dd>
+        </dl></li>
+      <li><b class="where">Tax &amp; Payment: pay the Net Payable</b>
+        <p>${due > 0 ? `Pay the site's <b>Net Payable</b> with <b>Pay Now</b>, or pay it separately by challan and add the payment so that <b>Payable</b> shows 0. The site won't let you submit until it does.`
+          : 'Nothing should be left to pay. The site\'s <b>Payable</b> must show 0 before you can submit.'}</p></li>
+      <li><b class="where">Return View: check every page</b>
+        <p>Look for missing income, assets or liabilities, and confirm the Assets &amp; Liabilities difference is 0.</p></li>
+      <li><b class="where">Submit, then download the acknowledgement slip</b>
+        <p>Save the slip and a copy of the return (print the Return View to PDF). You'll need the slip for your employer and banks. Keep the return PDF: next year, <b>Settings → Record a past year</b> can read it.</p></li>
+    </ol>
+  </section>
+  ${filingPanelHtml(c)}
+  <section class="panel">
+    <h3>Notes for next year</h3>
+    ${inp('submission.notes', { type: 'area', ph: 'Anything you learned, or values the site needed that weren\'t in here' })}
+  </section>
+  ${state.submission.submitted ? `<div class="ok">${y.ayLabel} is done. <button class="secondary" data-action="start-next" data-lock-safe="1">${years.includes(nextAY(state.assessmentYear)) ? 'Open' : 'Start'} ${yearInfo(nextAY(state.assessmentYear)).ayLabel}</button></div>` : ''}`;
+};
+
+/* ---------- step status ---------- */
+// Where a step stands: 'done', 'warn' (needs attention) or '' (to do), with a one-line summary.
+function stepState(id, s, c) {
+  const r = (state, detail) => ({ state, detail });
+  switch (id) {
+    case 'checklist': {
+      const docs = checklistDef(s)[0].items.filter(i => !s.checklist.na[i.id]);
+      const got = docs.filter(i => s.checklist.done[i.id]).length;
+      return r(got === docs.length ? 'done' : '', `${got} of ${docs.length} documents ready`);
+    }
+    case 'monthly': {
+      const mo = c.mo;
+      if (mo.monthsReceived === 12) return r('done', 'All 12 months entered');
+      return r('', mo.monthsReceived ? `${mo.monthsReceived} of 12 months entered` : 'Optional: track payslips through the year');
+    }
+    case 'income':
+      return c.grossSalary > 0 || c.otherIncomeGross > 0
+        ? r('done', `Taxable income ${fmt(c.totalIncome)} · tax ${fmt(c.netTax)}`) : r('', 'Not started');
+    case 'investments': {
+      if (!(c.eligibleInvestment > 0)) return r('', c.totalIncome > c.threshold ? `Invest up to ${fmt(c.investmentForMaxRebate)} for the full rebate` : 'Nothing entered');
+      const more = Math.max(0, c.investmentForMaxRebate - c.eligibleInvestment);
+      return r('done', `Rebate ${fmt(c.rebate)}${more >= 1 ? ` · ${fmt(more)} short of the full rebate` : ' · full rebate'}`);
+    }
+    case 'expenses':
+      return c.finalLifestyle > 0 ? r('done', `Living expenses ${fmt(c.finalLifestyle)}`) : r('', 'Not started');
+    case 'wealth':
+      // carried-over balances trivially "balance" before any income is in, so that doesn't count as done
+      if (!s.assets.some(a => num(a.closing) || num(a.opening)) && !s.liabilities.length) return r('', 'Not started');
+      if (!(c.grossSalary > 0 || c.otherIncomeGross > 0)) return r('', 'Fill in income first, then closing values');
+      return c.balanced ? r('done', `Balanced · net wealth ${fmt(c.closingNW)}`) : r('warn', `Difference ${fmt(c.difference)}: must be 0`);
+    case 'sheet': {
+      const p = sheetProgress(s, c);
+      return r(p.total && p.done === p.total ? 'done' : '', p.done ? `${p.done} of ${p.total} figures entered` : `${p.total} figures to enter`);
+    }
+    case 'file':
+      if (s.submission.submitted) return r('done', `Submitted${s.submission.date ? ` on ${s.submission.date}` : ''}`);
+      if (s.submission.taxPaid) return r('', 'Tax paid · submit the return');
+      return r('', Math.round(c.balance) > 0 ? `About ${fmt(c.balance)} to pay` : 'Nothing to pay by this estimate');
+    default: return r('', '');
+  }
+}
+
+// The step to do next, or null once the return is submitted: a step that needs attention first, otherwise the
+// first unfinished step after the furthest one done, so going back isn't suggested. Salary income is optional
+// once Income & tax is filled in.
+function nextStep(s, c) {
+  if (s.submission.submitted) return null;
+  const all = STEPS.map(st => ({ ...STEP_OF[st.id], ...stepState(st.id, s, c) }));
+  const incomeDone = all.find(x => x.id === 'income').state === 'done';
+  const open = all.filter(x => x.state !== 'done' && !(x.id === 'monthly' && incomeDone));
+  const furthest = all.map(x => x.state === 'done').lastIndexOf(true);
+  return open.find(x => x.state === 'warn') || open.find(x => x.n - 1 > furthest) || open[0] || null;
+}
+
+function navHtml(c) {
+  const item = (id, label, mark, cls = '') => `<button class="nav-item ${cls} ${id === tab ? 'active' : ''}" data-action="tab" data-tab="${id}"><span class="nav-num">${mark}</span><span class="label">${esc(label)}</span></button>`;
+  let h = item('overview', 'Home', '⌂', 'plain'); let grp = null;
+  for (const st of STEPS) {
+    if (st.group !== grp) { grp = st.group; h += `<div class="nav-group">${grp}</div>`; }
+    const ss = stepState(st.id, state, c);
+    h += item(st.id, st.nav, ss.state === 'done' ? '✓' : ss.state === 'warn' ? '!' : STEP_OF[st.id].n, `st-${ss.state}`);
+  }
+  return `${h}<div class="nav-group">More</div>${item('history', 'All years', '≡', 'plain')}${item('settings', 'Settings', '⋯', 'plain')}`;
+}
+
+function pageHead(id) {
+  const st = STEP_OF[id];
+  return `<div class="page-head"><div class="eyebrow">Step ${st.n} of ${STEPS.length}</div><h1>${esc(st.title)}</h1>
+    <p class="lead">${esc(st.lead)}</p>${st.portal ? `<span class="portal">On the website: <b>${esc(st.portal)}</b></span>` : ''}</div>`;
+}
+function stepNavHtml(id) {
+  const i = STEPS.findIndex(s => s.id === id); const prev = STEPS[i - 1]; const next = STEPS[i + 1];
+  return `<div class="step-nav">
+    <button class="secondary" data-action="tab" data-tab="${prev ? prev.id : 'overview'}">← ${esc(prev ? prev.nav : 'Home')}</button><span class="spacer"></span>
+    <button data-action="tab" data-tab="${next ? next.id : 'overview'}">${next ? `Next: ${esc(next.nav)} →` : 'Back to Home'}</button></div>`;
+}
 
 /* ---------- all years & export ---------- */
 let historyData = null; // transient: [{ay, s, c}] for the All years tab
@@ -1867,7 +2035,7 @@ function summaryRows(list) {
     r('Increase in net wealth', (s, c) => Math.round(c.nwChange)),
     r('Annual living expense', (s, c) => Math.round(c.finalTotal)),
     r('Assets & liabilities difference (must be 0)', (s, c) => Math.round(c.difference)),
-    r('Salary income tab: annual income', (s, c) => Math.round(c.mo.totalAnnual)),
+    r('Salary income: annual income', (s, c) => Math.round(c.mo.totalAnnual)),
     r('Checklist', (s, c) => c.checkLabel),
     r('Paid with return', s => (s.submission.taxPaid ? Math.round(num(s.submission.taxPaidAmount)) : '')),
     r('Submitted on', s => s.submission.date),
@@ -1880,13 +2048,12 @@ views.history = () => {
   if (!historyData) {
     loadAllYears().then(d => { historyData = d; if (tab === 'history') render(); })
       .catch(() => { $('#main').innerHTML = '<div class="bad">Could not load all years.</div>'; });
-    return '<h2>All years</h2><p class="muted">Loading…</p>';
+    return '<div class="page-head"><h1>All years</h1></div><p class="muted">Loading…</p>';
   }
   const rows = summaryRows(historyData);
   const head = historyData.map(({ ay }) => `<th class="r"><a href="#" data-action="open-year" data-ay="${ay}">${yearInfo(ay).ayLabel}</a>${ay === state.assessmentYear ? ' <span class="muted">(open)</span>' : ''}</th>`).join('');
   const body = rows.map(([label, ...vals]) => `<tr><td>${esc(label)}</td>${vals.map(v => `<td class="r">${typeof v === 'number' ? fmt(v) : esc(v)}</td>`).join('')}</tr>`).join('');
-  return `<h2>All years</h2>
-    <p class="muted">Key figures for every year saved. Click a year to open it and see the full detail. Amounts are what you entered, not the official assessment.</p>
+  return `<div class="page-head"><h1>All years</h1><p class="lead">Key figures for every year saved. Click a year to open it. Amounts are what you entered, not the official assessment.</p></div>
     <section class="panel" style="overflow-x:auto"><table class="grid"><thead><tr><th></th>${head}</tr></thead><tbody>${body}</tbody></table></section>
     <p><button data-action="export-all" data-lock-safe="1">Download this table (CSV)</button>
       <button class="secondary" data-action="export-year" data-lock-safe="1">Download ${yearInfo(state.assessmentYear).ayLabel} in full (CSV)</button></p>`;
@@ -2487,9 +2654,9 @@ function wealthChecks(s, c) {
   const premiums = Math.round(sum(s.investments.insurance.filter(p => p.owner !== 'other').map(p => p.premiumPaid)));
   if (ins.length) {
     const growth = Math.round(sum(ins.map(a => num(a.closing) - num(a.opening))));
-    if (growth !== premiums) out.push(`Life insurance asset grew by ${fmt(growth)}, but premiums paid this year on the Rebate tab total ${fmt(premiums)}. At total premiums paid, closing should be opening + ${fmt(premiums)}, unless the policy paid something out.`);
+    if (growth !== premiums) out.push(`Life insurance asset grew by ${fmt(growth)}, but premiums paid this year in the Rebate step total ${fmt(premiums)}. At total premiums paid, closing should be opening + ${fmt(premiums)}, unless the policy paid something out.`);
   } else if (premiums) {
-    out.push(`You paid ${fmt(premiums)} of life insurance premiums (Rebate tab) but no asset row looks like the policy. If you list it as an asset, add it under Other financial assets with "insurance" or the policy name in the description; otherwise the premiums belong in expenses.`);
+    out.push(`You paid ${fmt(premiums)} of life insurance premiums (Rebate step) but no asset row looks like the policy. If you list it as an asset, add it under Other financial assets with "insurance" or the policy name in the description; otherwise the premiums belong in expenses.`);
   }
   const cash = s.assets.filter(a => a.category === 'Cash in hand');
   if (cash.length) {
@@ -2503,7 +2670,7 @@ function wealthChecks(s, c) {
 function yearEndStatus() {
   const ye = state.yearEnd; const next = nextAY(state.assessmentYear);
   const nextNote = years.includes(next)
-    ? ` ${yearInfo(next).ayLabel} already exists: open its Assets & liabilities tab and click <b>Update opening values</b> to pick up changes.` : '';
+    ? ` ${yearInfo(next).ayLabel} already exists: open its Assets & liabilities step and click <b>Update opening values</b> to pick up changes.` : '';
   if (!ye) return `<div class="warn">Not saved yet. Next year would use the current figures.${nextNote}</div>`;
   const now = Math.round(compute(state).closingNW);
   const changed = now !== ye.closingNetWealth ? ` Your figures have changed since: net wealth is now ${fmt(now)}.` : '';
@@ -2511,50 +2678,28 @@ function yearEndStatus() {
 }
 
 views.settings = () => {
-  const r = state.rules;
+  const r = state.rules; const lbl = yearInfo(state.assessmentYear).ayLabel;
   const slabs = r.slabs.map((sl, i) => `<tr><td>${inp(`rules.slabs.${i}.upto`, { type: 'optnum', ph: 'rest' })}</td><td>${inp(`rules.slabs.${i}.rate`, { type: 'dec' })}</td>
     <td class="r"><button class="icon" data-action="del" data-list="rules.slabs" data-idx="${i}">✕</button></td></tr>`).join('');
-  return `<h2>Settings</h2>
-  <section class="panel">
-    <h3>Year-end values</h3>
-    <p>Saving freezes this year's closing assets, liabilities, net wealth and expenses as filed. Next year takes its opening values from them, and its Expenditure tab shows them as "Last year". Locking the year saves them too.</p>
-    ${yearEndStatus()}
-    <p><button data-action="save-yearend" data-lock-safe="1">${state.yearEnd ? 'Save again with current figures' : 'Save year-end values'}</button></p>
-  </section>
-  <section class="panel">
-    <h3>Lock this year</h3>
-    <label style="display:flex;gap:8px;align-items:center"><input type="checkbox" id="lockToggle" data-lock-safe="1" data-bind="locked" data-type="bool" data-rerender="1" ${state.locked ? 'checked' : ''}>
-      Locked: the year is filed, so editing is disabled to prevent accidental changes. You can still view, export and start next year.</label>
-  </section>
-  <section class="panel">
-    <h3>Person</h3>
-    <p>These returns belong to <b>${esc(personName())}</b>. Each person has their own years, carry-overs and backups, in <code>data/people/${esc(person)}/</code>. Switch or add people at the top of the page.</p>
-    <p><button class="secondary" data-action="rename-person" data-lock-safe="1">Rename</button>
-      <button class="secondary" data-action="remove-person" data-lock-safe="1">Remove from the app</button></p>
-  </section>
+  return `<div class="page-head"><h1>Settings</h1><p class="lead">Your profile, this year's tax rules, and managing years and people.</p></div>
   <section class="panel">
     <h3>Profile</h3>
     <div class="row">
       ${field('Name', inp('profile.name'))}
       ${field('TIN', inp('profile.tin'))}
-      ${field('Taxpayer category (sets tax-free threshold)', sel('profile.category', TAXPAYER_CATS))}
+      ${field('Taxpayer category (sets the tax-free amount)', sel('profile.category', TAXPAYER_CATS))}
     </div>
   </section>
-  ${filingPanelHtml(compute(state))}
   <section class="panel">
-    <h3>Notes for next year</h3>
-    ${inp('submission.notes', { type: 'area', ph: 'Anything you learned, or values the site needed that were not in here' })}
-  </section>
-  <section class="panel">
-    <h3>Tax rules for this year</h3>
+    <h3>Tax rules for ${lbl}</h3>
     <div class="help"><p>Defaults follow Finance Act 2025 (AY 2026-27). Check them against the current Finance Act each year: they change with the budget. They only affect the estimates here; the site does the official calculation.</p></div>
     <div class="row">
       ${Object.entries(TAXPAYER_CATS).map(([k, l]) => field(`Tax-free: ${l}`, inp(`rules.thresholds.${k}`, { type: 'num' }))).join('')}
     </div>
-    <h3>Slabs above the tax-free amount</h3>
+    <h3 style="margin-top:8px">Slabs above the tax-free amount</h3>
     <table class="grid" style="max-width:420px"><thead><tr><th class="r">Next (Tk), blank = rest</th><th class="r">Rate %</th><th></th></tr></thead><tbody>${slabs}</tbody></table>
     <button class="add" data-action="add-slab">+ Add slab</button>
-    <div class="row" style="margin-top:12px">
+    <div class="row" style="margin-top:14px">
       ${field('Minimum tax (Tk)', inp('rules.minTax', { type: 'num' }))}
       ${field('Salary exemption: 1 / x of salary', inp('rules.salaryExemptDivisor', { type: 'dec' }))}
       ${field('Salary exemption cap (Tk)', inp('rules.salaryExemptCap', { type: 'num' }))}
@@ -2573,8 +2718,8 @@ views.settings = () => {
   </section>
   <section class="panel">
     <h3>Years</h3>
-    <p>Switch years with the selector at the top. <b>Start ${yearInfo(nextAY(state.assessmentYear)).ayLabel}</b> creates the next year from this one. To record an earlier year (e.g. from an old return), create it blank here.</p>
-    <div class="row">
+    <p>Switch years from the <b>Year</b> list at the top, which can also start ${yearInfo(nextAY(state.assessmentYear)).ayLabel} from this one. To open any other year, enter it here.</p>
+    <div class="row" style="align-items:flex-end">
       <label class="field"><span>Assessment year starting (e.g. 2025 for AY 2025-26)</span><input id="newYearInput" data-lock-safe="1" inputmode="numeric" placeholder="${parseInt(state.assessmentYear, 10) - 1}"></label>
       <div class="field"><button class="secondary" data-action="create-year" data-lock-safe="1">Create / open year</button></div>
     </div>
@@ -2585,11 +2730,28 @@ views.settings = () => {
     ${pastReturnForm()}
   </section>
   <section class="panel">
+    <h3>Year-end values</h3>
+    <p>Saving freezes this year's closing assets, liabilities, net wealth and expenses as filed. Next year takes its opening values from them, and its Expenditure page shows them as "Last year". Locking the year saves them too.</p>
+    ${yearEndStatus()}
+    <div class="actions"><button class="secondary" data-action="save-yearend" data-lock-safe="1">${state.yearEnd ? 'Save again with current figures' : 'Save year-end values'}</button></div>
+  </section>
+  <section class="panel">
+    <h3>Lock this year</h3>
+    <label style="display:flex;gap:10px;align-items:center"><input type="checkbox" id="lockToggle" data-lock-safe="1" data-bind="locked" data-type="bool" data-rerender="1" ${state.locked ? 'checked' : ''}>
+      Locked: the year is filed, so editing is disabled to prevent accidental changes. You can still view, export and start next year.</label>
+  </section>
+  <section class="panel">
+    <h3>Person</h3>
+    <p>These returns belong to <b>${esc(personName())}</b>. Each person has their own years, carry-overs and backups, in <code>data/people/${esc(person)}/</code>. Switch or add people from the <b>Person</b> list at the top.</p>
+    <div class="actions"><button class="secondary" data-action="rename-person" data-lock-safe="1">Rename</button>
+      <button class="secondary" data-action="remove-person" data-lock-safe="1">Remove from the app</button></div>
+  </section>
+  <section class="panel">
     <h3>Export</h3>
     <p>CSV files open in Excel, Numbers or Google Sheets. Amounts are plain numbers so they add up in a spreadsheet.</p>
-    <p><button data-action="export-year" data-lock-safe="1">Download ${yearInfo(state.assessmentYear).ayLabel} (CSV)</button>
-      <button class="secondary" data-action="export-all" data-lock-safe="1">Download all-years summary (CSV)</button></p>
-    <p class="muted">Raw data is in <code>data/${state.assessmentYear}.json</code> in the app folder, with automatic backups in <code>data/backups/</code>.</p>
+    <div class="actions"><button data-action="export-year" data-lock-safe="1">Download ${lbl} (CSV)</button>
+      <button class="secondary" data-action="export-all" data-lock-safe="1">Download all-years summary (CSV)</button></div>
+    <p class="muted">Raw data is in <code>data/people/${esc(person)}/${state.assessmentYear}.json</code> in the app folder, with automatic backups in <code>data/people/${esc(person)}/backups/</code>.</p>
   </section>`;
 };
 
@@ -2740,8 +2902,8 @@ function yearBannerHtml() {
 }
 
 function render() {
-  $('#tabs').innerHTML = TABS.map(([id, label]) => `<button class="${id === tab ? 'active' : ''}" data-action="tab" data-tab="${id}">${label}</button>`).join('');
-  $('#main').innerHTML = (tab !== 'history' ? yearBannerHtml() : '') + views[tab]();
+  const isStep = !!STEP_OF[tab];
+  $('#main').innerHTML = (tab !== 'history' ? yearBannerHtml() : '') + (isStep ? pageHead(tab) : '') + views[tab]() + (isStep ? stepNavHtml(tab) : '');
   renderYearSelect(); // keeps the year badge (e.g. "locked") current
   if (state.locked) {
     $('#main').querySelectorAll('input, select, textarea, button').forEach(el => {
@@ -2753,6 +2915,7 @@ function render() {
 
 function refreshCalc() {
   const c = compute(state);
+  $('#steps').innerHTML = navHtml(c); // step marks follow the figures as you type
   document.querySelectorAll('[data-calc]').forEach(el => {
     const v = c[el.dataset.calc];
     el.textContent = typeof v === 'number' ? fmt(v) : (v ?? '');
@@ -2798,8 +2961,14 @@ document.addEventListener('change', e => {
   if (e.target.id === 'csvFile') return loadCsvFile(e.target.files[0]);
   if (e.target.id === 'taxCardPdf') { const f = e.target.files[0]; e.target.value = ''; if (!state.locked) importTaxCard(f); return; }
   if (e.target.id === 'returnPdf') { const f = e.target.files[0]; e.target.value = ''; return importReturnPdf(f); }
-  if (e.target.id === 'yearSelect') return loadYear(e.target.value);
-  if (e.target.id === 'personSelect') return switchPerson(e.target.value);
+  if (e.target.id === 'yearSelect') {
+    if (e.target.value === '__next') { renderYearSelect(); return startNextYear(); }
+    return loadYear(e.target.value);
+  }
+  if (e.target.id === 'personSelect') {
+    if (e.target.value === '__add') { renderPersonSelect(); return addPerson(); }
+    return switchPerson(e.target.value);
+  }
   if (e.target.id === 'balAsset') { bal.assetId = e.target.value; $('#balPreview').innerHTML = balancePreview().html; return; }
   if (e.target.id === 'ytdThrough') {
     if (state.locked) return;
@@ -2826,8 +2995,13 @@ document.addEventListener('click', async e => {
   const a = b.dataset.action;
   if (a === 'tab') {
     e.preventDefault(); tab = b.dataset.tab; if (tab === 'history') historyData = null;
-    history.replaceState(null, '', `#${tab}`); render(); window.scrollTo(0, 0); return;
+    history.replaceState(null, '', `#${tab}`); render(); window.scrollTo(0, 0);
+    $('.side .nav-item.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); // the step strip on phones
+    return;
   }
+  if (a === 'scroll') { e.preventDefault(); document.getElementById(b.dataset.to)?.scrollIntoView({ behavior: 'smooth', block: 'start' }); return; }
+  if (a === 'start-next') return startNextYear();
+  if (a === 'toggle-entered') { hideEntered = !hideEntered; render(); return; }
   if (state.locked && !['month', 'copy', 'print', 'export-year', 'export-all', 'open-year', 'go-year', 'create-year', 'save-yearend', 'past-start', 'past-import', 'past-cancel', 'past-save', 'rename-person', 'remove-person', 'confirm-paid', 'undo-paid', 'confirm-submitted', 'undo-submitted', 'ack-sent', 'ack-undo', 'ack-add-bank', 'ack-del-bank', 'ack-suggest'].includes(a)) return;
   if (a === 'add') { getPath(state, b.dataset.list).push(TPL[b.dataset.tpl]()); }
   else if (a === 'del') {
@@ -2965,8 +3139,6 @@ function loadCsvFile(file) {
   reader.readAsText(file);
 }
 
-$('#nextYearBtn').addEventListener('click', startNextYear);
-$('#addPersonBtn').addEventListener('click', addPerson);
 
 (async function init() {
   const fromHash = location.hash.slice(1);
