@@ -1,121 +1,163 @@
-# Tax Return Helper (etaxnbr.gov.bd)
+# Tax Return Helper
 
-A local web app for preparing your Bangladesh income tax e-return on [etaxnbr.gov.bd](https://etaxnbr.gov.bd). You enter your income, investments, expenses, assets and liabilities in one place. The app estimates your tax and checks that your assets and liabilities balance the way the website requires. Then you type the figures into the website from a field-by-field entry sheet.
+**Prepare your Bangladesh income tax return on your own computer, then type it into [etaxnbr.gov.bd](https://etaxnbr.gov.bd) without the guesswork.**
 
-![Overview of a sample year](docs/screenshot.png)
+Filing the e-return means gathering a year of salary, bank, investment and spending figures, then making the website's assets and liabilities statement balance to exactly 0. This app walks you through that in eight steps, in the same order as the website. It estimates your tax as you go, balances your figures for you, and gives you a sheet of every number to type in, page by page.
 
-*The screenshot shows a made-up sample taxpayer.*
+- **Private.** It runs on your own machine and keeps everything in plain files in its `data` folder. No account, no internet connection, nothing is uploaded.
+- **Nothing to install** apart from Python. There are no packages or build steps.
+- **Built for salaried individuals** filing in Bangladesh. It works for other income too, such as bank interest, dividends and rent.
 
-> **Your data stays on your computer.** The app runs on your own machine, is only reachable from that machine, and saves everything as plain files in its `data` folder. It needs no account and no internet connection, and it doesn't send your figures anywhere.
+> **The app's figures are estimates.** The website does the official calculation, so check your tax against its **Tax & Payment** page before you pay. This project isn't affiliated with the National Board of Revenue (NBR).
 
-> **The figures are estimates.** The website does the official calculation. Check your tax against its **Tax & Payment** page before you pay or submit. This project isn't affiliated with the National Board of Revenue.
+---
 
-## What it does
+## Contents
 
-The app walks you through the return in eight numbered steps, in the same order as the website: gather documents, salary income, income & tax, rebate, expenditure, assets & liabilities, then entering the figures on the website and paying and submitting. The sidebar ticks each step off as you finish it, and **Home** tells you what to do next. Every step shows where its figures go on etaxnbr.gov.bd and has **Back** and **Next** buttons.
+1. [Before you start](#before-you-start)
+2. [Install and run](#install-and-run)
+3. [Two terms you need: assessment year and income year](#two-terms-you-need-assessment-year-and-income-year)
+4. [Filing a return, step by step](#filing-a-return-step-by-step)
+5. [Other things it does](#other-things-it-does)
+6. [Your data](#your-data)
+7. [Troubleshooting](#troubleshooting)
+8. [For contributors](#for-contributors)
 
-- **Salary income:** enter each month's payslip as it arrives, totals so far, or the whole year at once. Months you haven't received yet are projected, so you can see your tax position, and the TDS still needed, at any point in the year.
-- **Income & tax:** salary components and the salary exemption, other income (bank interest, DPS profit and so on), tax deducted at source and advance tax, with the tax worked out slab by slab.
-- **Rebate:** life insurance, DPS, provident fund, savings certificates, shares and other investments, with the caps applied.
-- **Expenditure:** the website's expenditure rows, in the same order and wording.
-- **Assets & liabilities:** opening and closing values for each item, a check that the difference is 0, and a **Balance it** helper to close any gap.
-- **Enter on the website:** every figure to type into the website, page by page in the website's order, with copy buttons, tick-boxes and a progress bar. You can hide the rows you've already entered.
-- **Pay & submit:** what to do on the website's last pages, then record the tax you paid and the submission, share the acknowledgement slip, and lock the year.
-- **Documents:** a checklist of documents to gather and steps to follow. Mark anything that doesn't apply to you as N/A.
-- **Several years:** starting the next year (from the **Year** list) carries over assets, liabilities, policies and categories. **All years** shows key figures side by side. A badge and a coloured stripe show whether the open year is the one you're filing now, the income year in progress, or a past or future year, and a banner warns you before you edit a year you're only looking at.
-- **Several people:** keep separate returns for, say, you and your spouse. Add someone from the **Person** list.
-- **Import a filed return (PDF):** record a year you filed before you used the app, from the return's PDF. See [Importing documents](#importing-documents).
-- **Import a monthly tax card (PDF):** fill a month in the Salary income step from your employer's tax card. This currently reads the accordHRM payroll format.
-- **Export:** download a year, or the all-years summary, as CSV.
+---
 
-## Running it
+## Before you start
 
-The app needs **Python 3.10 or newer** and nothing else: there are no packages to install. Alternatively you can run it with Docker.
+You'll need:
 
-First, get the code: on GitHub, click **Code → Download ZIP** and unzip it, or clone the repository with git.
+- **A TIN** and the **mobile number registered with your NID**. The website sends you a one-time code when you sign up.
+- **An account on [etaxnbr.gov.bd](https://etaxnbr.gov.bd).** The first time, choose *e-Return*, then *I am not yet registered*, enter your TIN and mobile number, confirm the code and set a password. You don't need it until step 7, but it's worth checking early that your login works.
+- **Your documents for the year.** Step 1 in the app has the full checklist. The main ones are:
+  - your salary certificate and the tax deducted at source (TDS) certificate from your employer
+  - bank statements showing balances on 30 June, and interest certificates
+  - statements for insurance, DPS, provident fund and savings certificates
+  - loan and credit card statements
+  - last year's return, for last year's net wealth
 
-### macOS
+## Install and run
 
-Double-click **`Start Tax Helper.command`**, or open Terminal in the folder and run:
+You need **Python 3.10 or newer**. Then download the app: on GitHub click **Code → Download ZIP** and unzip it, or run `git clone`.
 
-    python3 server.py
+| System | How to start it |
+|---|---|
+| **macOS** | Double-click **`Start Tax Helper.command`**. The first time, macOS may block it: right-click it, choose **Open**, then confirm. |
+| **Windows** | Install Python from [python.org](https://www.python.org/downloads/) and tick **"Add python.exe to PATH"** in the installer. Then double-click **`server.py`**. |
+| **Linux** | Run `python3 server.py` in the app's folder. |
+| **Docker** | Run `docker compose up -d --build`. It restarts on its own whenever Docker is running. |
 
-Your browser opens http://127.0.0.1:8765. To stop the app, press Ctrl+C in the Terminal window or close it.
+The app opens in your browser at **http://127.0.0.1:8765**. It's only reachable from your own computer. To stop it, close the terminal window, or run `docker compose down` for Docker.
 
-The first time you double-click the `.command` file, macOS may block it because it was downloaded. If that happens, right-click it, choose **Open**, then confirm.
+Options:
 
-### Windows
+```bash
+python3 server.py --port 9000      # use a different port
+python3 server.py --no-browser     # don't open the browser automatically
+```
 
-1. Install Python 3 from [python.org](https://www.python.org/downloads/). In the installer, tick **"Add python.exe to PATH"**.
-2. In the app's folder, double-click **`server.py`**. Or open a terminal in the folder and run:
+## Two terms you need: assessment year and income year
 
-       py server.py
+Bangladesh taxes the **income year**, which runs from 1 July to 30 June. You file the return in the **assessment year** that follows it.
 
-Your browser opens http://127.0.0.1:8765. To stop the app, close the terminal window.
+> The **AY 2026-27** return covers income earned from **1 July 2025 to 30 June 2026**, and is filed after 30 June 2026. The usual deadline is 30 November, and it's often extended.
 
-### Linux
+The **Year** list at the top of the app shows both. A coloured badge tells you which year is open:
 
-    python3 server.py
+- **Filing now:** the return that's due.
+- **In progress:** the current income year, which you can track month by month.
+- **Past year** or **future year:** a warning banner appears before you edit it.
 
-Then open http://127.0.0.1:8765.
+## Filing a return, step by step
 
-### Docker (any system)
+The sidebar lists eight steps. A step gets a **✓** when it's done and a **!** when it needs attention. **Home** always shows your next step with a **Continue** button, and every step has **Back** and **Next** buttons at the bottom.
 
-    docker compose up -d --build
+Each step also says where its figures go on the website, under **"On the website"**.
 
-Then open http://127.0.0.1:8765. The container starts again on its own whenever Docker is running. Your data stays in the `data` folder next to the app, which is mounted into the container. Stop it with `docker compose down`.
+| # | Step | What you do | On the website |
+|---|---|---|---|
+| 1 | **Documents** | Tick off documents as you gather them. Mark anything that doesn't apply to you as **N/A**. | — |
+| 2 | **Salary income** *(optional)* | Enter payslips month by month, totals so far, or the whole year at once. Then click **Send totals to Income & tax**. | — |
+| 3 | **Income & tax** | Salary components, other income such as bank interest, TDS and advance tax. Check them against your certificates. | Income |
+| 4 | **Rebate** | Investments made during the year: life insurance, DPS, provident fund, savings certificates, shares. | Rebate |
+| 5 | **Expenditure** | What you spent, in the website's own rows. You can import totals from an expense tracker CSV. | Expenditure (IT-10BB) |
+| 6 | **Assets & liabilities** | What you owned and owed on 30 June. Use **Balance it** until the difference is **0**. | Assets & Liabilities (IT-10B) |
+| 7 | **Enter on the website** | Every figure to type in, page by page. **Copy** a number, paste it into the site, tick the row. | Every page |
+| 8 | **Pay & submit** | Pay what's left, submit, download the acknowledgement slip, then record it all here and lock the year. | Tax & Payment → Return View → Submit |
 
-After updating the app's code, run the same `docker compose up -d --build` command again, then reload the page with a hard refresh (Ctrl+Shift+R, or Cmd+Shift+R on a Mac).
+### Why the difference must be 0
 
-### Options
+The website checks that your money adds up: what came in (income, plus gifts or loans received) must equal what went out (spending and tax) plus the growth in your net wealth. If it doesn't, you can't submit.
 
-    python3 server.py --port 9000      # use a different port
-    python3 server.py --no-browser     # don't open the browser
+The app shows this **difference** on Home and in step 6. When it isn't 0, **Balance it** suggests the usual causes, such as a missing bank account, cash in hand, or untracked spending. It then lets you split what's left between expenses and an asset.
 
-## Getting started
+### Tips for the website
 
-1. Open the app. **Home** shows your next step; click **Continue**, or pick a step from the sidebar.
-2. **Documents:** gather what's on the list.
-3. **Salary income** (optional): enter payslips through the year, then click **Send totals to Income & tax**.
-4. **Income & tax:** check it against your salary certificate and TDS certificate.
-5. **Rebate**, **Expenditure** and **Assets & liabilities:** fill them in. Use **Balance it** until the difference is 0.
-6. **Enter on the website:** keep it beside etaxnbr.gov.bd and type the figures in, ticking each one off.
-7. **Pay & submit:** pay what's left on the website, submit, then record both here and lock the year.
+Most steps have a **💡 Tips** section about snags people commonly hit on the website. For example: challan numbers getting cut off, bank interest belonging under *Financial Assets*, or which box a tax payment goes in. Step 7 also has a **Troubleshooting** list.
 
-Most steps have a **Tips** section for the snags people commonly hit on the website.
+## Other things it does
 
-### Tax rules
+- **Several years.** Pick **＋ Start AY …** from the **Year** list to start the next year. It carries over your assets and liabilities (last year's closing values become this year's opening values), policies, accounts and categories. **All years** shows key figures side by side.
+- **Several people.** Pick **＋ Add person…** from the **Person** list to keep separate returns for, say, you and your spouse.
+- **Import a filed return (PDF).** Record a year you filed before you started using the app. On the website, open the filed return's **Return View** and save it as a PDF. Then use **Settings → Record a past year from its return**. The year is saved and locked, and the next year starts from its figures.
+- **Import a monthly tax card (PDF).** Fill a month of salary and TDS from your employer's tax card. This currently reads the **accordHRM** format. Look for **Import a tax card** in step 2.
+- **Tax rules per year.** Tax-free amounts, slabs, rebate rates, caps and minimum tax are all editable in **Settings → Tax rules**. The defaults follow the Finance Act 2025. The rules change with each budget, so check them every year.
+- **Export.** Download a year, or the all-years summary, as a CSV for Excel, Numbers or Google Sheets.
+- **Lock a year** once it's filed, so nothing changes by accident. You can still view and export it.
 
-Each year keeps its own tax rules: tax-free amounts, slabs, rebate rates and caps, minimum tax. You can edit them in **Settings → Tax rules**. The built-in defaults follow the Finance Act at the time of writing, and they change with each budget, so check them every year. If your employer's tax card shows different rules, importing the card offers to copy them.
-
-## Importing documents
-
-Both imports read PDFs that contain text, like the ones websites and payroll systems produce. They can't read scans or photos. The PDF is read in memory and isn't kept.
-
-**A filed return:** for a year you filed before you used the app.
-
-1. On etaxnbr.gov.bd, open the filed return's **Return View**, print it, and choose **Save as PDF**.
-2. In the app, go to **Settings → Record a past year from its return → Import a return PDF**.
-3. Check the figures it found. It compares its own tax and balance with the return's. Then click **Save as that year**.
-
-The year is saved and locked, with its year-end values, and the app offers to carry its opening values and the tax paid with the return into the following year.
-
-**A monthly tax card:** in the **Salary income** step, click **Import a tax card (PDF)** and choose the month's tax card from accordHRM. The app fills that month's salary items and TDS and marks the month received. It then compares your employer's projection and tax rules with the app's.
+The two PDF imports only read PDFs that contain text, like the ones websites and payroll systems produce. They can't read scans or photos. Files are read in memory and not kept.
 
 ## Your data
 
-- Each person's years are stored as `data/people/<person>/<assessment-year>.json`, for example `data/people/me/2026-2027.json`.
-- Changes save automatically. Before each save, the previous version is backed up to `data/people/<person>/backups/<assessment-year>/`, at most one backup a minute, keeping the last 30.
-- Removing a person in **Settings → Person** moves their folder to `data/removed/`; nothing is deleted.
-- To move the app to another computer, copy the whole folder, including `data`.
-- Keep only one browser tab of the app open at a time. Two tabs can overwrite each other's changes.
+Everything lives in the `data` folder next to the app:
 
-The `data` folder is excluded from git, so your figures never end up in a commit.
+```
+data/
+  people/
+    me/
+      2026-2027.json        ← one file per assessment year
+      backups/2026-2027/    ← automatic backups
+  removed/                  ← people you removed (nothing is deleted)
+```
 
-## Contributing
+- **It saves automatically** as you type. Before each save, the previous version is backed up: at most one backup a minute, keeping the last 30.
+- **To move to another computer**, copy the whole folder, including `data`.
+- **`data` is excluded from git**, so your figures never end up in a commit.
+- **Keep only one browser tab of the app open.** Two tabs can overwrite each other's changes.
 
-Bug reports and pull requests are welcome. The app is deliberately dependency-free: a Python standard-library server (`server.py`), a small PDF text reader (`pdftext.py`), and a single-page app in plain JavaScript (`static/`). Please don't attach real returns or tax documents to issues. Describe the problem, or use made-up figures.
+## Troubleshooting
+
+**The page didn't change after I updated the app.**
+Reload with a hard refresh: Ctrl+Shift+R, or Cmd+Shift+R on a Mac. With Docker, run `docker compose up -d --build` first.
+
+**My figures went back to old values.**
+Another tab of the app probably saved over them. Close the extra tabs, and restore from `data/people/<person>/backups/` if you need to.
+
+**"Can't reach the local server".**
+The app's window or terminal was closed. Start it again.
+
+**The website's tax differs from the app's.**
+The website is right. Compare its *Tax Computation* line by line with step 3. If the website uses different rules, such as a different rebate rate, update **Settings → Tax rules** to match.
+
+**The difference is 0 in the app but not on the website.**
+Compare *Income shown*, *Tax exempted income*, *Annual living expense* and *Net wealth* with the summary in step 6, one at a time. Usually one field on the website wasn't updated.
+
+## For contributors
+
+Bug reports and pull requests are welcome. The app is deliberately small and dependency-free:
+
+| File | What it is |
+|---|---|
+| `server.py` | A Python standard-library web server. It serves the UI and reads and writes the JSON files in `data/`. |
+| `pdftext.py` | A small PDF text extractor, used by the two PDF imports. |
+| `static/index.html`, `static/styles.css`, `static/app.js` | The whole app: a single page in plain JavaScript, with no framework and no build step. |
+
+To work on it, run `python3 server.py` and reload the browser after editing files in `static/`.
+
+**Please don't attach real returns or tax documents to issues.** Describe the problem, or use made-up figures.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE).
