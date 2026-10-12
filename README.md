@@ -12,18 +12,20 @@ A local web app for preparing your Bangladesh income tax e-return on [etaxnbr.go
 
 ## What it does
 
+The app walks you through the return in eight numbered steps, in the same order as the website: gather documents, salary income, income & tax, rebate, expenditure, assets & liabilities, then entering the figures on the website and paying and submitting. The sidebar ticks each step off as you finish it, and **Home** tells you what to do next. Every step shows where its figures go on etaxnbr.gov.bd and has **Back** and **Next** buttons.
+
 - **Salary income:** enter each month's payslip as it arrives, totals so far, or the whole year at once. Months you haven't received yet are projected, so you can see your tax position, and the TDS still needed, at any point in the year.
 - **Income & tax:** salary components and the salary exemption, other income (bank interest, DPS profit and so on), tax deducted at source and advance tax, with the tax worked out slab by slab.
 - **Rebate:** life insurance, DPS, provident fund, savings certificates, shares and other investments, with the caps applied.
 - **Expenditure:** the website's expenditure rows, in the same order and wording.
 - **Assets & liabilities:** opening and closing values for each item, a check that the difference is 0, and a **Balance it** helper to close any gap.
-- **Entry sheet:** every figure to type into the website, in the website's order, with copy buttons and tick-boxes.
-- **Pay and submit:** record the tax you paid with the return and the submission, then lock the year.
-- **Checklist:** documents to gather and steps to follow. Mark anything that doesn't apply to you as N/A.
-- **Several years:** **Start next year** carries over assets, liabilities, policies and categories. **All years** shows key figures side by side. A badge and a coloured stripe show whether the open year is the one you're filing now, the income year in progress, or a past or future year, and a banner warns you before you edit a year you're only looking at.
-- **Several people:** keep separate returns for, say, you and your spouse.
+- **Enter on the website:** every figure to type into the website, page by page in the website's order, with copy buttons, tick-boxes and a progress bar. You can hide the rows you've already entered.
+- **Pay & submit:** what to do on the website's last pages, then record the tax you paid and the submission, share the acknowledgement slip, and lock the year.
+- **Documents:** a checklist of documents to gather and steps to follow. Mark anything that doesn't apply to you as N/A.
+- **Several years:** starting the next year (from the **Year** list) carries over assets, liabilities, policies and categories. **All years** shows key figures side by side. A badge and a coloured stripe show whether the open year is the one you're filing now, the income year in progress, or a past or future year, and a banner warns you before you edit a year you're only looking at.
+- **Several people:** keep separate returns for, say, you and your spouse. Add someone from the **Person** list.
 - **Import a filed return (PDF):** record a year you filed before you used the app, from the return's PDF. See [Importing documents](#importing-documents).
-- **Import a monthly tax card (PDF):** fill a month on the Salary income tab from your employer's tax card. This currently reads the accordHRM payroll format.
+- **Import a monthly tax card (PDF):** fill a month in the Salary income step from your employer's tax card. This currently reads the accordHRM payroll format.
 - **Export:** download a year, or the all-years summary, as CSV.
 
 ## Running it
@@ -72,15 +74,15 @@ After updating the app's code, run the same `docker compose up -d --build` comma
 
 ## Getting started
 
-1. Open the app. It starts on the current assessment year.
-2. Work through **Checklist → Gather documents**.
-3. Fill in **Salary income**, then click **Send totals to Income & tax**.
-4. Check **Income & tax** against your salary certificate and TDS certificate.
-5. Fill in **Rebate**, **Expenditure** and **Assets & liabilities**. Use **Balance it** until the difference is 0.
-6. Open the **Entry sheet** beside etaxnbr.gov.bd and type the figures in, ticking each one off.
-7. After paying and submitting on the website, record both under **Overview → Pay and submit**, and lock the year.
+1. Open the app. **Home** shows your next step; click **Continue**, or pick a step from the sidebar.
+2. **Documents:** gather what's on the list.
+3. **Salary income** (optional): enter payslips through the year, then click **Send totals to Income & tax**.
+4. **Income & tax:** check it against your salary certificate and TDS certificate.
+5. **Rebate**, **Expenditure** and **Assets & liabilities:** fill them in. Use **Balance it** until the difference is 0.
+6. **Enter on the website:** keep it beside etaxnbr.gov.bd and type the figures in, ticking each one off.
+7. **Pay & submit:** pay what's left on the website, submit, then record both here and lock the year.
 
-Most tabs have a **Tips** section for the snags people commonly hit on the website.
+Most steps have a **Tips** section for the snags people commonly hit on the website.
 
 ### Tax rules
 
@@ -98,7 +100,7 @@ Both imports read PDFs that contain text, like the ones websites and payroll sys
 
 The year is saved and locked, with its year-end values, and the app offers to carry its opening values and the tax paid with the return into the following year.
 
-**A monthly tax card:** on the **Salary income** tab, click **Import a tax card (PDF)** and choose the month's tax card from accordHRM. The app fills that month's salary items and TDS and marks the month received. It then compares your employer's projection and tax rules with the app's.
+**A monthly tax card:** in the **Salary income** step, click **Import a tax card (PDF)** and choose the month's tax card from accordHRM. The app fills that month's salary items and TDS and marks the month received. It then compares your employer's projection and tax rules with the app's.
 
 ## Your data
 

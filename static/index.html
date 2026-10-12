@@ -8,24 +8,27 @@
 </head>
 <body>
   <header class="top">
-    <div class="wrap top-inner">
-    <div class="brand">Tax Return Helper <span class="muted">· etaxnbr.gov.bd</span></div>
-    <div class="year-controls">
-      <div class="ctl-group">
-        <label>Person <select id="personSelect"></select></label>
-        <button id="addPersonBtn" class="secondary" title="Prepare a return for someone else, e.g. your spouse">Add person</button>
+    <div class="top-inner">
+      <div class="brand">
+        <span class="brand-mark">৳</span>
+        <span>Tax Return Helper<small>for etaxnbr.gov.bd</small></span>
       </div>
-      <div class="ctl-group">
-        <label>Year <select id="yearSelect"></select></label>
+      <div class="year-controls">
+        <label class="ctl" title="Whose return. Add someone else, e.g. your spouse, from this list.">
+          <span>Person</span><select id="personSelect"></select>
+        </label>
+        <label class="ctl" title="Assessment year. Start the next year from this list.">
+          <span>Year</span><select id="yearSelect"></select>
+        </label>
         <span id="yearRole" class="year-pill"></span>
-        <button id="nextYearBtn" class="secondary" title="Start the next year, carrying over assets, liabilities, policies and categories">Start next year</button>
+        <span id="saveStatus" class="save-status"></span>
       </div>
-      <span id="saveStatus" class="muted"></span>
-    </div>
     </div>
   </header>
-  <nav class="tabs"><div id="tabs" class="wrap tabs-inner"></div></nav>
-  <main id="main"><p class="muted">Loading…</p></main>
+  <div class="shell">
+    <nav id="steps" class="side" aria-label="Steps"></nav>
+    <main id="main"><p class="muted">Loading…</p></main>
+  </div>
   <script src="app.js"></script>
 </body>
 </html>
